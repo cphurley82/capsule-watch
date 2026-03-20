@@ -7,6 +7,12 @@ Capsule Watch is a self-hosted monitoring dashboard for a DIY Apple Time Machine
 
 This repository currently contains the design baseline and implementation plan so we can build from a clear, versioned foundation.
 
+## Setup guides
+
+- [DIY Time Capsule setup](docs/diy-time-capsule-setup.md)
+- [Disk formatting for Time Machine](docs/disk-formatting-for-time-machine.md)
+- [Install Capsule Watch](docs/install-capsule-watch.md)
+
 ## Python workflow
 
 Capsule Watch will use `uv` from the start for Python version pinning, dependency locking, environment sync, and common project commands. We are not bootstrapping that tooling yet, but the architecture and implementation plan now assume an `uv`-managed workflow for both development and deployment preparation.

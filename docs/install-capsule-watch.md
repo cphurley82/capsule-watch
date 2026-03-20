@@ -22,32 +22,134 @@ Make sure your server already has:
 - `avahi-daemon` running if you rely on Bonjour discovery
 - at least one successful backup from a Mac
 - SSH or local terminal access to the Ubuntu host
-
-You will also need:
-
 - `sudo` access on the Ubuntu host
-- Git installed
-- Python 3.12 available
-- `uv` installed for Python environment management
 
-## 1. Install base packages
+## Prerequisite tools
 
-Install the packages Capsule Watch is expected to rely on:
+Start by installing and testing the base tools Capsule Watch depends on. On a minimal Ubuntu install, `wget` may be present when `curl` is not, and `python3` may be available without `pip`, so it is worth verifying the toolchain explicitly up front.
+
+### Install the base packages
 
 ```bash
 sudo apt update
-sudo apt install -y git curl python3 smartmontools
+sudo apt install -y git wget curl python3 smartmontools
 ```
 
-If `uv` is not already installed, install it:
+On Ubuntu, installing `smartmontools` may also create or enable `smartmontools.service` and related `smartd` unit links. That is expected and separate from Capsule Watch's own services.
+
+### Install `uv`
+
+Download the installer with either `curl` or `wget`, then install `uv` to `/usr/local/bin` so it is available to both your admin user and the `capsule-watch` service account later.
+
+With `curl`:
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
+curl -LsSf https://astral.sh/uv/install.sh -o /tmp/install-uv.sh
+sudo env UV_UNMANAGED_INSTALL=/usr/local/bin sh /tmp/install-uv.sh
 ```
 
-Open a new shell after installing `uv`, or make sure `~/.local/bin` is on your `PATH`.
+With `wget`:
 
-## 2. Create the service user and directories
+```bash
+wget -qO /tmp/install-uv.sh https://astral.sh/uv/install.sh
+sudo env UV_UNMANAGED_INSTALL=/usr/local/bin sh /tmp/install-uv.sh
+```
+
+Do not assume `python3 -m pip` is available on a fresh Ubuntu install. Use the official `uv` installer instead.
+
+### Verify the toolchain
+
+```bash
+git --version
+python3 --version
+wget --version | head -n 1
+curl --version | head -n 1
+systemctl --version | head -n 1
+visudo -V | head -n 1
+smartctl --version | head -n 1
+uv --version
+```
+
+At this stage, `smartctl --version` should work without `sudo`. Device-specific SMART queries come later and may require the dedicated `sudoers` configuration in this guide.
+
+Tested on Ubuntu 24.04 with:
+
+- `Python 3.12.3`
+- `git 2.43.0`
+- `GNU Wget 1.21.4`
+- `curl 8.5.0`
+- `systemd 255`
+- `visudo 1.9.15p5`
+- `smartctl 7.4`
+- `uv 0.10.12`
+
+## Verify monitoring tools and host access
+
+Before installing Capsule Watch itself, verify that the host exposes the data sources the collectors will depend on.
+
+### Verify the core monitoring commands
+
+```bash
+command -v smartctl tune2fs df uptime free systemctl
+smartctl --scan
+systemctl status smbd --no-pager --lines=0
+systemctl status avahi-daemon --no-pager --lines=0
+uptime
+free -h
+```
+
+What this confirms:
+
+- `smartctl --scan` can discover candidate storage devices
+- `systemctl` can see the Samba and Avahi services Capsule Watch expects to monitor
+- `uptime` and `free` provide the basic host telemetry used by the dashboard
+
+### Verify the backup volume path
+
+First identify the actual filesystem and mount point on the server:
+
+```bash
+lsblk -f
+```
+
+Then check the filesystem mounted at your Time Machine storage path:
+
+```bash
+df -hT /path/to/your/time-machine-root
+```
+
+Do not assume the path is `/srv/timecapsule`. Use the real mount point from your host.
+
+If your backup volume is ext4, this command should show `Type` as `ext4`. That confirms the host can support the planned ext4 filesystem metadata checks.
+
+### Verify privileged disk inspection commands
+
+Some checks require elevated access to block devices even though the binaries themselves are installed correctly.
+
+Without `sudo`, these commands may fail with `Permission denied`:
+
+```bash
+smartctl -H /dev/<disk>
+tune2fs -l /dev/<filesystem>
+```
+
+Verify them with `sudo`:
+
+```bash
+sudo smartctl -H /dev/<disk>
+sudo tune2fs -l /dev/<filesystem> | head -n 20
+```
+
+If these succeed, you have confirmed that the host can support SMART health checks and ext4 filesystem metadata checks. The later `sudoers` step in this guide narrows that access for the `capsule-watch` service account.
+
+Expected results:
+
+- `smartctl` should reach the device and report an overall health result such as `PASSED`
+- `tune2fs` should print filesystem metadata like the volume name, UUID, mount path, and block size
+
+Some drives may also print vendor-specific SMART warnings while still returning a usable health result. Treat those as signals to review, but not necessarily as proof the command path is broken.
+
+## 1. Create the service user and directories
 
 Create a dedicated system user and the runtime directories:
 
@@ -63,7 +165,20 @@ sudo chmod 755 /opt/capsule-watch /var/lib/capsule-watch /var/log/capsule-watch
 sudo chmod 750 /etc/capsule-watch
 ```
 
-## 3. Clone the repository
+Verify the user and directory layout:
+
+```bash
+getent passwd capsule-watch
+ls -ld /opt/capsule-watch /etc/capsule-watch /var/lib/capsule-watch /var/log/capsule-watch
+```
+
+Expected shape:
+
+- `capsule-watch` uses `/usr/sbin/nologin`
+- `/opt/capsule-watch`, `/var/lib/capsule-watch`, and `/var/log/capsule-watch` are owned by `capsule-watch:capsule-watch`
+- `/etc/capsule-watch` is owned by `root:root` and is not world-readable
+
+## 2. Clone the repository
 
 Clone the project into the application directory:
 
@@ -72,14 +187,23 @@ sudo git clone https://github.com/<your-org-or-user>/capsule-watch.git /opt/caps
 sudo chown -R capsule-watch:capsule-watch /opt/capsule-watch
 ```
 
+Verify the clone as the `capsule-watch` user:
+
+```bash
+sudo -u capsule-watch -H git -C /opt/capsule-watch rev-parse --short HEAD
+ls -la /opt/capsule-watch
+```
+
 If you are installing from your own fork or local mirror, replace the repository URL accordingly.
 
-## 4. Create the Python environment
+If you run `git -C /opt/capsule-watch ...` as your normal user after changing ownership to `capsule-watch`, Git may report `detected dubious ownership`. That is expected. Prefer running Git verification commands against this directory as the `capsule-watch` user.
+
+## 3. Create the Python environment
 
 Sync the project environment as the `capsule-watch` user:
 
 ```bash
-sudo -u capsule-watch -H env PATH="$HOME/.local/bin:$PATH" uv sync --frozen --project /opt/capsule-watch
+sudo -u capsule-watch -H /usr/local/bin/uv sync --frozen --project /opt/capsule-watch
 ```
 
 The exact command may change slightly once the app scaffold is committed, but the intended model is:
@@ -88,7 +212,15 @@ The exact command may change slightly once the app scaffold is committed, but th
 - a committed `uv.lock`
 - a project-local virtual environment managed by `uv`
 
-## 5. Create the configuration file
+Current repository status:
+
+- If the repository has not been scaffolded yet, this step will fail with `No pyproject.toml found`
+- That failure is expected until the Python application structure is committed
+- Once `pyproject.toml` and `uv.lock` exist in the repo, rerun this step and expect it to create the project environment
+
+At the current project stage, treat the remaining sections in this guide as the intended release installation shape. Resume hands-on verification after the Python scaffold and entrypoints exist.
+
+## 4. Create the configuration file
 
 Create `/etc/capsule-watch/config.yaml`:
 
@@ -98,7 +230,7 @@ server:
   port: 8080
 
 paths:
-  time_machine_root: /srv/timecapsule
+  time_machine_root: /path/to/your/time-machine-root
   snapshot_file: /var/lib/capsule-watch/status.json
   alerts_file: /var/lib/capsule-watch/alerts.json
 
@@ -134,7 +266,7 @@ sudo chmod 640 /etc/capsule-watch/config.yaml
 
 This file shape is intentionally illustrative for now. The final config schema should be treated as authoritative once the application code exists.
 
-## 6. Grant limited privileged access
+## 5. Grant limited privileged access
 
 Capsule Watch should not run as `root`, and the web UI should not ask for a sudo password.
 
@@ -155,7 +287,7 @@ capsule-watch ALL=(root) NOPASSWD: /usr/bin/systemctl status avahi-daemon
 
 Keep this list as small as possible. If the final implementation uses wrapper scripts instead of direct commands, prefer the wrapper-script approach.
 
-## 7. Install the web service
+## 6. Install the web service
 
 Create `/etc/systemd/system/capsule-watch-web.service`:
 
@@ -179,7 +311,7 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-## 8. Install the collector service and timer
+## 7. Install the collector service and timer
 
 Create `/etc/systemd/system/capsule-watch-collector.service`:
 
@@ -213,7 +345,7 @@ Unit=capsule-watch-collector.service
 WantedBy=timers.target
 ```
 
-## 9. Install the alert service and timer
+## 8. Install the alert service and timer
 
 Create `/etc/systemd/system/capsule-watch-alert.service`:
 
@@ -247,7 +379,7 @@ Unit=capsule-watch-alert.service
 WantedBy=timers.target
 ```
 
-## 10. Enable services on boot
+## 9. Enable services on boot
 
 Reload `systemd`, enable the web service, and start the timers:
 
@@ -258,7 +390,7 @@ sudo systemctl enable --now capsule-watch-collector.timer
 sudo systemctl enable --now capsule-watch-alert.timer
 ```
 
-## 11. Verify the installation
+## 10. Verify the installation
 
 Check service status:
 
@@ -284,7 +416,7 @@ http://<server-ip>:8080/
 
 You should expect the dashboard to show the latest saved snapshot rather than collecting live data during page loads.
 
-## 12. Optional email alerts
+## 11. Optional email alerts
 
 Email is the intended MVP alert channel.
 
