@@ -1,0 +1,34 @@
+[project]
+name = "capsule-watch"
+version = "0.1.0"
+description = "Local-first Time Machine server monitoring dashboard."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "flask>=3.1.0,<4.0.0",
+  "pyyaml>=6.0.0,<7.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0,<9.0.0",
+]
+
+[project.scripts]
+capsule-watch-web = "capsule_watch.web:main"
+capsule-watch-collectors = "capsule_watch.collectors:main"
+capsule-watch-alerts = "capsule_watch.alerts:main"
+
+[build-system]
+requires = ["setuptools>=68.0.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

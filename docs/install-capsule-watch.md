@@ -206,19 +206,13 @@ Sync the project environment as the `capsule-watch` user:
 sudo -u capsule-watch -H /usr/local/bin/uv sync --frozen --project /opt/capsule-watch
 ```
 
-The exact command may change slightly once the app scaffold is committed, but the intended model is:
+This command is based on the current scaffold, where the runtime model is:
 
 - project metadata in `pyproject.toml`
 - a committed `uv.lock`
 - a project-local virtual environment managed by `uv`
 
-Current repository status:
-
-- If the repository has not been scaffolded yet, this step will fail with `No pyproject.toml found`
-- That failure is expected until the Python application structure is committed
-- Once `pyproject.toml` and `uv.lock` exist in the repo, rerun this step and expect it to create the project environment
-
-At the current project stage, treat the remaining sections in this guide as the intended release installation shape. Resume hands-on verification after the Python scaffold and entrypoints exist.
+At the current project stage, this step should create the virtual environment successfully when the repository includes `pyproject.toml` and `uv.lock`.
 
 ## 4. Create the configuration file
 

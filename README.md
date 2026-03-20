@@ -5,7 +5,7 @@ Capsule Watch is a self-hosted monitoring dashboard for a DIY Apple Time Machine
 - A local-first monitoring app for the backup server
 - A companion documentation site with setup and troubleshooting guides
 
-This repository currently contains the design baseline and implementation plan so we can build from a clear, versioned foundation.
+This repository includes both the design baseline and an initial runnable Python scaffold for the monitoring application.
 
 ## Setup guides
 
@@ -15,7 +15,15 @@ This repository currently contains the design baseline and implementation plan s
 
 ## Python workflow
 
-Capsule Watch will use `uv` from the start for Python version pinning, dependency locking, environment sync, and common project commands. We are not bootstrapping that tooling yet, but the architecture and implementation plan now assume an `uv`-managed workflow for both development and deployment preparation.
+Capsule Watch uses `uv` for Python version pinning, dependency locking, environment sync, and common project commands.
+
+Typical local commands:
+
+- `uv sync --extra dev`
+- `uv run pytest`
+- `uv run capsule-watch-collectors --config /etc/capsule-watch/config.yaml`
+- `uv run capsule-watch-alerts --config /etc/capsule-watch/config.yaml`
+- `uv run capsule-watch-web --config /etc/capsule-watch/config.yaml`
 
 ## Project goals
 
@@ -48,4 +56,4 @@ Capsule Watch will use `uv` from the start for Python version pinning, dependenc
 
 ## Current status
 
-Planning and design are complete enough to begin implementation. The next milestone is to scaffold the Python application and define the snapshot schema used by the collectors, API, and UI.
+The repository now includes a tested initial implementation for config loading, snapshot persistence, collectors, alert transitions, and Flask web endpoints. The next milestone is to expand collector depth, notification delivery, and production-hardening details.
