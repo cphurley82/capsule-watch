@@ -62,3 +62,12 @@ server:
 
     with pytest.raises(ConfigError, match="server.port"):
         load_config(config_path)
+
+
+def test_load_config_reports_permission_denied(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("{}", encoding="utf-8")
+    config_path.chmod(0)
+
+    with pytest.raises(ConfigError, match="Permission denied reading config file"):
+        load_config(config_path)

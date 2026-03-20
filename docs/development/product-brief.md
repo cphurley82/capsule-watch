@@ -4,6 +4,10 @@
 
 Capsule Watch helps a home server owner trust their DIY Time Machine setup without logging into Ubuntu and manually checking Samba, disk space, SMART output, or the age of the latest backup.
 
+## Scope note
+
+This brief describes target MVP behavior. The repository already includes an initial working implementation, but some items below remain roadmap goals rather than completed features.
+
 ## Problem statement
 
 DIY Time Machine servers are achievable with Samba on Ubuntu, but ongoing confidence is harder than initial setup. Failures tend to be silent until a restore is needed. The owner needs a lightweight way to answer a few critical questions quickly:

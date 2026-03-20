@@ -2,7 +2,24 @@
 
 ## Summary
 
-Capsule Watch will be a small Python application paired with scheduled collectors and a static documentation site. The operational principle is simple: collect system and backup metrics on a schedule, persist a snapshot locally, and render the latest known state through a read-only web dashboard.
+Capsule Watch is a small Python application paired with scheduled collectors. The operational principle is simple: collect system and backup metrics on a schedule, persist a snapshot locally, and render the latest known state through a read-only web dashboard.
+
+## Implementation status (March 2026)
+
+Implemented:
+
+- Flask app with `/`, `/healthz`, and `/api/status`
+- Collector CLI writing snapshots to disk
+- Alert CLI evaluating transition state and persisting active alerts
+- `systemd` service and timer unit templates
+- Core docs for DIY setup, disk formatting, and Capsule Watch installation
+
+Planned or partial:
+
+- Notification delivery (email transport implementation)
+- Push channels
+- Rich dashboard UI beyond the current basic status page
+- Optional static-site generator pipeline for docs publishing
 
 ## System context
 
@@ -29,14 +46,14 @@ The target environment is an Ubuntu server already configured as a Time Machine 
 
 - Runs on a separate schedule via `systemd` timer
 - Evaluates thresholds against the latest snapshot
-- Persists alert state so it only notifies on transitions
-- Sends resolved notifications when an alert condition clears
-- Uses email for MVP alert delivery; push channels such as `ntfy` are a later enhancement
+- Persists alert state so transitions can be detected cleanly
+- Computes both new and resolved transitions
+- Notification delivery is planned; email is first, push channels such as `ntfy` are later
 
 ### 4. Static documentation site
 
 - Maintained as Markdown in the repo
-- Built as a static site for GitHub Pages and optional local hosting
+- Ready to publish as a static site for GitHub Pages or optional local hosting
 - Contains both DIY Time Capsule setup instructions and Capsule Watch install/configuration steps
 
 ## Python environment strategy
@@ -88,7 +105,8 @@ Suggested top-level sections:
 ### SMART health
 
 - Use `smartctl` with tightly scoped sudo permissions
-- Capture overall health, drive temperature, power-on hours, key attributes, and latest self-test
+- Current collector captures overall health from `smartctl -H`
+- Temperature, power-on hours, and self-test history are planned enhancements
 
 ### Services
 
@@ -102,7 +120,8 @@ Suggested top-level sections:
 
 ### Host telemetry
 
-- Use `uptime`, `/proc/loadavg`, `free`, and `/sys/class/thermal` where available
+- Current collector uses `uptime -p` and `free -m`
+- Load and thermal detail are planned enhancements
 - Keep collection lightweight enough for low-power hardware
 
 ## Request flow
@@ -111,7 +130,7 @@ Suggested top-level sections:
 2. Collectors run independently with timeouts.
 3. Service writes a complete snapshot and notes any partial failures.
 4. Web app reads the latest snapshot and renders the dashboard.
-5. Alert timer evaluates thresholds and sends transition-based notifications.
+5. Alert timer evaluates thresholds and records transition state; notification delivery is a planned follow-on.
 
 ## Security model
 

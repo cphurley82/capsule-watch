@@ -1,68 +1,81 @@
-# Disk Formatting and Configuration for Time Machine on Ubuntu
+# Disk Formatting for Time Machine on Ubuntu
 
-## 1. Choose a Disk
-- Use a dedicated physical disk or large partition for Time Machine backups.
-- Prefer SSD or high-quality HDD for reliability.
+This guide prepares a backup volume for Samba Time Machine use.
 
-## 2. Partition and Format
-- Use `lsblk` to identify the disk:
-  ```
-  lsblk
-  ```
-- Partition with `fdisk` or `parted`:
-  ```
-  sudo fdisk /dev/sdX
-  ```
-- Format as ext4 (recommended for Linux):
-  ```
-  sudo mkfs.ext4 -L TimeCapsule /dev/sdX1
-  ```
+## 1. Identify the target disk
 
-## 3. Mount the Disk
-- Create a mount point:
-  ```
-  sudo mkdir -p /srv/timecapsule
-  ```
-- Add to `/etc/fstab` for automatic mounting:
-  ```
-  UUID=<disk-uuid> /srv/timecapsule ext4 defaults,noatime 0 2
-  ```
-- Find UUID:
-  ```
-  sudo blkid /dev/sdX1
-  ```
-- Mount:
-  ```
-  sudo mount /srv/timecapsule
-  ```
+```bash
+lsblk -f
+```
 
-## 4. Set Permissions
-- Ensure Samba user can write:
-  ```
-  sudo chown nobody:nogroup /srv/timecapsule
-  sudo chmod 777 /srv/timecapsule
-  ```
+Choose the correct device (example: `/dev/sda`) and double-check before formatting.
 
-## 5. Optional: Sparsebundle Setup
-- Time Machine uses sparsebundles for each Mac. No manual setup needed, but ensure the share supports large files.
+## 2. Partition and format
 
-## 6. Quota Configuration (Optional)
-- To limit backup size, use Samba's `fruit:quota` or filesystem quotas.
-- Example for Samba:
-  ```
-  fruit:quota = 500000000000
-  ```
-- For ext4, use `quota` tools:
-  ```
-  sudo apt install quota
-  sudo edquota -u <username>
-  ```
+Create a partition (example: `/dev/sda1`) using your preferred tool:
 
-## 7. Best Practices
-- Use `noatime` mount option to reduce disk writes.
-- Monitor SMART status for drive health.
-- Keep backups on a dedicated disk for easier recovery.
+```bash
+sudo fdisk /dev/sda
+```
 
----
+Format it as ext4:
 
-For detailed steps, see the official Ubuntu and Samba documentation. This guide is linked from the main DIY Time Capsule setup doc for optimal disk configuration.
+```bash
+sudo mkfs.ext4 -L TimeCapsule /dev/sda1
+```
+
+## 3. Create a mount point and configure `fstab`
+
+```bash
+sudo mkdir -p /srv/timecapsule
+sudo blkid /dev/sda1
+```
+
+Add an `fstab` entry using the filesystem UUID:
+
+```fstab
+UUID=<disk-uuid> /srv/timecapsule ext4 defaults,noatime 0 2
+```
+
+Mount and verify:
+
+```bash
+sudo mount -a
+df -hT /srv/timecapsule
+```
+
+## 4. Apply secure permissions for Samba access
+
+Use a dedicated group (for example `tmbackup`) that your Samba backup user belongs to:
+
+```bash
+sudo groupadd --force tmbackup
+sudo chown root:tmbackup /srv/timecapsule
+sudo chmod 2770 /srv/timecapsule
+```
+
+Avoid `chmod 777` for backup storage directories.
+
+## 5. Optional: enable ACL support
+
+If you need to grant read access to monitoring users (for example `capsule-watch`) without changing primary ownership:
+
+```bash
+sudo apt install -y acl
+sudo setfacl -m u:capsule-watch:rx /srv/timecapsule
+```
+
+## 6. Verify readiness for Time Machine
+
+```bash
+sudo touch /srv/timecapsule/.write-test && sudo rm /srv/timecapsule/.write-test
+```
+
+Then continue with [DIY Time Capsule setup](diy-time-capsule-setup.md) to configure Samba and verify macOS backups.
+
+## 7. Best practices
+
+- Use a dedicated disk when possible.
+- Keep `noatime` for reduced write amplification.
+- Run SMART checks regularly (`smartctl`).
+- Keep at least 15-20% free space to avoid backup churn and fragmentation.

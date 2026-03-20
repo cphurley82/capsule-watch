@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Capsule Watch collectors on a schedule
+
+[Timer]
+OnBootSec=2m
+OnUnitActiveSec=15m
+Persistent=true
+Unit=capsule-watch-collector.service
+
+[Install]
+WantedBy=timers.target

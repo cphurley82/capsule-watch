@@ -2,7 +2,7 @@
 
 This guide assumes you have already completed the DIY Time Capsule setup and verified that Time Machine backups are working over Samba.
 
-Capsule Watch is still in the planning stage at the time of writing, so this page documents the intended installation layout for the first release. Treat it as the target setup shape rather than a copy-paste-verified installer.
+This install path has been validated against a local Ubuntu 24.04 host and reflects the current repository layout (`config/`, `deploy/systemd/`, and Python CLI entry points).
 
 ## What this guide covers
 
@@ -83,6 +83,8 @@ Tested on Ubuntu 24.04 with:
 - `smartctl 7.4`
 - `uv 0.10.12`
 
+Validated end-to-end on March 20, 2026.
+
 ## Verify monitoring tools and host access
 
 Before installing Capsule Watch itself, verify that the host exposes the data sources the collectors will depend on.
@@ -122,6 +124,25 @@ Do not assume the path is `/srv/timecapsule`. Use the real mount point from your
 
 If your backup volume is ext4, this command should show `Type` as `ext4`. That confirms the host can support the planned ext4 filesystem metadata checks.
 
+Also verify the backup root contains sparsebundle directories:
+
+```bash
+ls -ld /path/to/your/time-machine-root
+find /path/to/your/time-machine-root -maxdepth 1 -type d -name '*.sparsebundle'
+```
+
+If sparsebundles are present but backup recency later reports `No sparsebundle backups found`, verify service-user permissions in the Troubleshooting section.
+
+A common fix is to grant the `capsule-watch` service account read/traverse access with ACLs:
+
+```bash
+sudo apt install -y acl
+sudo setfacl -m u:capsule-watch:rx /path/to/your/time-machine-root
+sudo setfacl -R -m u:capsule-watch:rX /path/to/your/time-machine-root/*.sparsebundle
+```
+
+Then re-run the path checks above before continuing.
+
 ### Verify privileged disk inspection commands
 
 Some checks require elevated access to block devices even though the binaries themselves are installed correctly.
@@ -160,7 +181,7 @@ sudo mkdir -p /etc/capsule-watch
 sudo mkdir -p /var/lib/capsule-watch
 sudo mkdir -p /var/log/capsule-watch
 sudo chown -R capsule-watch:capsule-watch /opt/capsule-watch /var/lib/capsule-watch /var/log/capsule-watch
-sudo chown root:root /etc/capsule-watch
+sudo chown root:capsule-watch /etc/capsule-watch
 sudo chmod 755 /opt/capsule-watch /var/lib/capsule-watch /var/log/capsule-watch
 sudo chmod 750 /etc/capsule-watch
 ```
@@ -176,7 +197,7 @@ Expected shape:
 
 - `capsule-watch` uses `/usr/sbin/nologin`
 - `/opt/capsule-watch`, `/var/lib/capsule-watch`, and `/var/log/capsule-watch` are owned by `capsule-watch:capsule-watch`
-- `/etc/capsule-watch` is owned by `root:root` and is not world-readable
+- `/etc/capsule-watch` is owned by `root:capsule-watch` and is not world-readable
 
 ## 2. Clone the repository
 
@@ -216,49 +237,27 @@ At the current project stage, this step should create the virtual environment su
 
 ## 4. Create the configuration file
 
-Create `/etc/capsule-watch/config.yaml`:
+Start from the versioned example file in the repository:
 
-```yaml
-server:
-  host: 0.0.0.0
-  port: 8080
-
-paths:
-  time_machine_root: /path/to/your/time-machine-root
-  snapshot_file: /var/lib/capsule-watch/status.json
-  alerts_file: /var/lib/capsule-watch/alerts.json
-
-services:
-  samba_unit: smbd
-  avahi_unit: avahi-daemon
-
-thresholds:
-  backup_warning_hours: 26
-  backup_critical_hours: 48
-  disk_warning_percent: 85
-  disk_critical_percent: 95
-
-alerts:
-  email:
-    enabled: false
-    from: capsule-watch@example.com
-    to:
-      - you@example.com
-    smtp_host: smtp.example.com
-    smtp_port: 587
-    username: smtp-user
-    password: change-me
-    starttls: true
+```bash
+sudo cp /opt/capsule-watch/config/config.example.yaml /etc/capsule-watch/config.yaml
+sudoedit /etc/capsule-watch/config.yaml
 ```
 
-Then lock down the file permissions:
+Set at least the following values for your host:
+
+- `paths.time_machine_root`
+- `services.samba_unit` and `services.avahi_unit` if you use non-default unit names
+- `alerts.email.*` if email delivery is enabled
+
+Important: `paths.time_machine_root` should point to the directory that directly contains your `*.sparsebundle` folders. If it points one level too high or too low, backup recency will report `No sparsebundle backups found`.
+
+Then lock down file permissions:
 
 ```bash
 sudo chown root:capsule-watch /etc/capsule-watch/config.yaml
 sudo chmod 640 /etc/capsule-watch/config.yaml
 ```
-
-This file shape is intentionally illustrative for now. The final config schema should be treated as authoritative once the application code exists.
 
 ## 5. Grant limited privileged access
 
@@ -275,102 +274,49 @@ Example contents:
 ```sudoers
 capsule-watch ALL=(root) NOPASSWD: /usr/sbin/smartctl
 capsule-watch ALL=(root) NOPASSWD: /usr/sbin/tune2fs
-capsule-watch ALL=(root) NOPASSWD: /usr/bin/systemctl status smbd
-capsule-watch ALL=(root) NOPASSWD: /usr/bin/systemctl status avahi-daemon
 ```
 
-Keep this list as small as possible. If the final implementation uses wrapper scripts instead of direct commands, prefer the wrapper-script approach.
+Keep this list as small as possible. The current collectors only elevate `smartctl` and `tune2fs`.
+
+Capsule Watch collectors first attempt these commands directly and automatically retry with `sudo -n` only when they receive a permission-related failure. That means you should not need to run the whole app as `root`, and the service will not prompt for an interactive password.
+
+Validate the `sudoers` file before continuing:
+
+```bash
+sudo visudo -cf /etc/sudoers.d/capsule-watch
+```
+
+Optional runtime check as the service user:
+
+```bash
+sudo -u capsule-watch -H sudo -n smartctl --scan
+sudo -u capsule-watch -H sudo -n tune2fs -l /dev/<filesystem> | head -n 5
+```
 
 ## 6. Install the web service
 
-Create `/etc/systemd/system/capsule-watch-web.service`:
+Install the versioned unit file from the repository:
 
-```ini
-[Unit]
-Description=Capsule Watch web application
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=capsule-watch
-Group=capsule-watch
-WorkingDirectory=/opt/capsule-watch
-Environment=CAPSULE_WATCH_CONFIG=/etc/capsule-watch/config.yaml
-ExecStart=/opt/capsule-watch/.venv/bin/python -m capsule_watch.web
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
+```bash
+sudo cp /opt/capsule-watch/deploy/systemd/capsule-watch-web.service /etc/systemd/system/capsule-watch-web.service
 ```
 
 ## 7. Install the collector service and timer
 
-Create `/etc/systemd/system/capsule-watch-collector.service`:
+Install the collector unit and timer from the repository:
 
-```ini
-[Unit]
-Description=Capsule Watch collector run
-After=network-online.target
-
-[Service]
-Type=oneshot
-User=capsule-watch
-Group=capsule-watch
-WorkingDirectory=/opt/capsule-watch
-Environment=CAPSULE_WATCH_CONFIG=/etc/capsule-watch/config.yaml
-ExecStart=/opt/capsule-watch/.venv/bin/python -m capsule_watch.collectors
-```
-
-Create `/etc/systemd/system/capsule-watch-collector.timer`:
-
-```ini
-[Unit]
-Description=Run Capsule Watch collectors on a schedule
-
-[Timer]
-OnBootSec=2m
-OnUnitActiveSec=15m
-Persistent=true
-Unit=capsule-watch-collector.service
-
-[Install]
-WantedBy=timers.target
+```bash
+sudo cp /opt/capsule-watch/deploy/systemd/capsule-watch-collector.service /etc/systemd/system/capsule-watch-collector.service
+sudo cp /opt/capsule-watch/deploy/systemd/capsule-watch-collector.timer /etc/systemd/system/capsule-watch-collector.timer
 ```
 
 ## 8. Install the alert service and timer
 
-Create `/etc/systemd/system/capsule-watch-alert.service`:
+Install the alert unit and timer from the repository:
 
-```ini
-[Unit]
-Description=Capsule Watch alert evaluation
-After=network-online.target
-
-[Service]
-Type=oneshot
-User=capsule-watch
-Group=capsule-watch
-WorkingDirectory=/opt/capsule-watch
-Environment=CAPSULE_WATCH_CONFIG=/etc/capsule-watch/config.yaml
-ExecStart=/opt/capsule-watch/.venv/bin/python -m capsule_watch.alerts
-```
-
-Create `/etc/systemd/system/capsule-watch-alert.timer`:
-
-```ini
-[Unit]
-Description=Run Capsule Watch alert evaluation on a schedule
-
-[Timer]
-OnBootSec=3m
-OnUnitActiveSec=15m
-Persistent=true
-Unit=capsule-watch-alert.service
-
-[Install]
-WantedBy=timers.target
+```bash
+sudo cp /opt/capsule-watch/deploy/systemd/capsule-watch-alert.service /etc/systemd/system/capsule-watch-alert.service
+sudo cp /opt/capsule-watch/deploy/systemd/capsule-watch-alert.timer /etc/systemd/system/capsule-watch-alert.timer
 ```
 
 ## 9. Enable services on boot
@@ -389,9 +335,9 @@ sudo systemctl enable --now capsule-watch-alert.timer
 Check service status:
 
 ```bash
-systemctl status capsule-watch-web.service
-systemctl status capsule-watch-collector.timer
-systemctl status capsule-watch-alert.timer
+systemctl status capsule-watch-web.service --no-pager -l
+systemctl status capsule-watch-collector.timer --no-pager -l
+systemctl status capsule-watch-alert.timer --no-pager -l
 ```
 
 Check recent logs:
@@ -402,6 +348,20 @@ journalctl -u capsule-watch-collector.service -n 50
 journalctl -u capsule-watch-alert.service -n 50
 ```
 
+If you are troubleshooting a fresh change, filter logs by time so older startup failures do not distract from current state:
+
+```bash
+journalctl -u capsule-watch-web.service --since "10 minutes ago" --no-pager
+journalctl -u capsule-watch-collector.service --since "10 minutes ago" --no-pager
+```
+
+Force a collector run and check the resulting snapshot:
+
+```bash
+sudo systemctl start capsule-watch-collector.service
+curl -sS http://127.0.0.1:8080/api/status | python3 -m json.tool
+```
+
 If the web service is running, open:
 
 ```text
@@ -410,42 +370,65 @@ http://<server-ip>:8080/
 
 You should expect the dashboard to show the latest saved snapshot rather than collecting live data during page loads.
 
-## 11. Optional email alerts
+## 11. Email alerts (planned)
 
-Email is the intended MVP alert channel.
+Email is the intended first notification channel, but SMTP delivery is not wired in yet.
 
-To enable it later:
-
-1. Update the `alerts.email` section in `/etc/capsule-watch/config.yaml`.
-2. Make sure your SMTP relay allows mail from the server.
-3. Restart the web service and wait for the next alert evaluation run.
-
-```bash
-sudo systemctl restart capsule-watch-web.service
-```
+Today, the alert service evaluates transitions and stores alert state in `paths.alerts_file`. Keep the `alerts.email` section configured so you are ready once notifier delivery lands.
 
 ## Troubleshooting
 
-### `uv` is not found under `sudo`
+### `Permission denied: /etc/capsule-watch/config.yaml`
 
-Use a full path to the binary, or preserve the correct `PATH` when running as `capsule-watch`.
-
-### SMART checks fail
-
-Confirm `smartmontools` is installed and verify the required `sudoers` entry exists.
-
-### The dashboard loads but shows stale data
-
-Check whether the collector timer is active and whether the collector service wrote `/var/lib/capsule-watch/status.json`.
-
-### The app does not start on boot
-
-Run:
+Make sure both the config directory and file allow group traverse/read for `capsule-watch`:
 
 ```bash
-sudo systemctl enable capsule-watch-web.service
-sudo systemctl enable capsule-watch-collector.timer
-sudo systemctl enable capsule-watch-alert.timer
+sudo chown root:capsule-watch /etc/capsule-watch
+sudo chmod 750 /etc/capsule-watch
+sudo chown root:capsule-watch /etc/capsule-watch/config.yaml
+sudo chmod 640 /etc/capsule-watch/config.yaml
 ```
 
-Then reboot and verify the units again.
+### Backup recency shows `No sparsebundle backups found`
+
+1. Confirm `paths.time_machine_root` points directly to the directory containing `*.sparsebundle`.
+2. Confirm the service account can enumerate it:
+
+```bash
+sudo -u capsule-watch -H ls -ld /path/to/your/time-machine-root
+sudo -u capsule-watch -H find /path/to/your/time-machine-root -maxdepth 1 -type d -name '*.sparsebundle'
+```
+
+3. If needed, grant read/traverse access with ACLs:
+
+```bash
+sudo setfacl -m u:capsule-watch:rx /path/to/your/time-machine-root
+sudo setfacl -R -m u:capsule-watch:rX /path/to/your/time-machine-root/*.sparsebundle
+```
+
+### SMART or filesystem checks stay in warning/unknown
+
+Verify `sudoers` parsing and command access:
+
+```bash
+sudo visudo -cf /etc/sudoers.d/capsule-watch
+sudo -u capsule-watch -H sudo -n smartctl --scan
+sudo -u capsule-watch -H sudo -n tune2fs -l /dev/<filesystem> | head -n 5
+```
+
+### `uv` is not found under `sudo`
+
+Use a full path to the binary:
+
+```bash
+sudo -u capsule-watch -H /usr/local/bin/uv sync --frozen --project /opt/capsule-watch
+```
+
+### Old errors still show in `journalctl` after a fix
+
+Use time-filtered logs while validating current behavior:
+
+```bash
+journalctl -u capsule-watch-web.service --since "10 minutes ago" --no-pager
+journalctl -u capsule-watch-collector.service --since "10 minutes ago" --no-pager
+```

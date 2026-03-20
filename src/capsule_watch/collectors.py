@@ -10,6 +10,14 @@ from pathlib import Path
 from typing import Callable
 
 from capsule_watch.config import AppConfig, load_config
+from capsule_watch.parsers import (
+    parse_df_pk,
+    parse_df_pt,
+    parse_free_m,
+    parse_smartctl_health,
+    parse_smartctl_scan,
+    parse_tune2fs,
+)
 from capsule_watch.snapshot import empty_snapshot, write_snapshot
 
 
@@ -21,6 +29,7 @@ class CommandResult:
 
 
 Runner = Callable[[list[str], int], CommandResult]
+PRIVILEGED_COMMANDS = {"smartctl", "tune2fs"}
 
 
 def run_command(command: list[str], timeout: int = 10) -> CommandResult:
@@ -36,6 +45,18 @@ def run_command(command: list[str], timeout: int = 10) -> CommandResult:
         stdout=completed.stdout,
         stderr=completed.stderr,
     )
+
+
+def run_command_with_optional_sudo(
+    command: list[str],
+    *,
+    timeout: int = 10,
+    base_runner: Runner = run_command,
+) -> CommandResult:
+    result = base_runner(command, timeout)
+    if _should_retry_with_sudo(command, result):
+        return base_runner(["sudo", "-n", *command], timeout)
+    return result
 
 
 def collect_services(units: list[str], runner: Runner) -> dict:
@@ -56,11 +77,8 @@ def collect_storage_usage(path: str, warning: int, critical: int, runner: Runner
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "df failed")
 
-    lines = [line for line in result.stdout.strip().splitlines() if line.strip()]
-    if len(lines) < 2:
-        raise RuntimeError("Unexpected df output")
-    fields = lines[1].split()
-    used_percent = int(fields[4].rstrip("%"))
+    parsed = parse_df_pk(result.stdout)
+    used_percent = int(parsed["used_percent"])
 
     if used_percent >= critical:
         status = "critical"
@@ -71,14 +89,7 @@ def collect_storage_usage(path: str, warning: int, critical: int, runner: Runner
 
     return {
         "status": status,
-        "items": {
-            "filesystem": fields[0],
-            "total_kib": int(fields[1]),
-            "used_kib": int(fields[2]),
-            "available_kib": int(fields[3]),
-            "used_percent": used_percent,
-            "mountpoint": fields[5],
-        },
+        "items": parsed,
     }
 
 
@@ -86,48 +97,54 @@ def collect_filesystem_health(path: str, runner: Runner) -> dict:
     result = runner(["df", "-PT", path], timeout=10)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "df -PT failed")
-    lines = [line for line in result.stdout.strip().splitlines() if line.strip()]
-    if len(lines) < 2:
-        raise RuntimeError("Unexpected df -PT output")
-    fields = lines[1].split()
-    device = fields[0]
-    filesystem_type = fields[1]
+    parsed = parse_df_pt(result.stdout)
+    device = parsed["device"]
+    filesystem_type = parsed["filesystem_type"]
     if filesystem_type != "ext4":
         return {
             "status": "unsupported",
-            "items": {"device": device, "filesystem_type": filesystem_type},
+            "items": parsed,
         }
 
-    tune = runner(["tune2fs", "-l", device], timeout=10)
+    tune = run_command_with_optional_sudo(
+        ["tune2fs", "-l", device],
+        timeout=10,
+        base_runner=runner,
+    )
     if tune.returncode != 0:
         raise RuntimeError(tune.stderr.strip() or "tune2fs failed")
-    mount_count = None
-    max_mount_count = None
-    for line in tune.stdout.splitlines():
-        if line.startswith("Mount count:"):
-            mount_count = int(line.split(":", 1)[1].strip())
-        if line.startswith("Maximum mount count:"):
-            max_mount_count = int(line.split(":", 1)[1].strip())
+    tune_data = parse_tune2fs(tune.stdout)
 
     return {
         "status": "healthy",
         "items": {
             "device": device,
             "filesystem_type": filesystem_type,
-            "mount_count": mount_count,
-            "max_mount_count": max_mount_count,
+            "mount_count": tune_data["mount_count"],
+            "max_mount_count": tune_data["max_mount_count"],
+            "volume_name": tune_data["volume_name"],
         },
     }
 
 
 def collect_drive_health(runner: Runner) -> dict:
-    scan = runner(["smartctl", "--scan"], timeout=15)
+    scan = run_command_with_optional_sudo(
+        ["smartctl", "--scan"],
+        timeout=15,
+        base_runner=runner,
+    )
     if scan.returncode != 0 or not scan.stdout.strip():
         return {"status": "unknown", "items": {}, "message": "No SMART devices found"}
 
-    first_line = scan.stdout.strip().splitlines()[0]
-    device = first_line.split()[0]
-    result = runner(["smartctl", "-H", device], timeout=15)
+    devices = parse_smartctl_scan(scan.stdout)
+    if not devices:
+        return {"status": "unknown", "items": {}, "message": "No SMART devices parsed"}
+    device = str(devices[0]["device"])
+    result = run_command_with_optional_sudo(
+        ["smartctl", "-H", device],
+        timeout=15,
+        base_runner=runner,
+    )
     if result.returncode != 0 and "PASSED" not in result.stdout:
         return {
             "status": "warning",
@@ -135,14 +152,11 @@ def collect_drive_health(runner: Runner) -> dict:
             "message": result.stderr.strip() or "smartctl returned non-zero status",
         }
 
-    raw = result.stdout
-    if "PASSED" in raw:
-        status = "healthy"
-    elif "FAILED" in raw:
-        status = "critical"
-    else:
-        status = "warning"
-    return {"status": status, "items": {"device": device, "raw": raw.strip()}}
+    status = parse_smartctl_health(result.stdout)
+    return {
+        "status": status,
+        "items": {"device": device, "driver_type": devices[0]["driver_type"], "raw": result.stdout.strip()},
+    }
 
 
 def collect_host_telemetry(runner: Runner) -> dict:
@@ -153,14 +167,7 @@ def collect_host_telemetry(runner: Runner) -> dict:
     if free_result.returncode != 0:
         raise RuntimeError("free command failed")
 
-    lines = [line for line in free_result.stdout.splitlines() if line.strip()]
-    memory_line = next((line for line in lines if line.startswith("Mem:")), "")
-    fields = memory_line.split()
-    memory = {
-        "total_mb": int(fields[1]) if len(fields) > 1 else None,
-        "used_mb": int(fields[2]) if len(fields) > 2 else None,
-        "free_mb": int(fields[3]) if len(fields) > 3 else None,
-    }
+    memory = parse_free_m(free_result.stdout)
     return {"status": "healthy", "items": {"uptime": uptime_result.stdout.strip(), "memory": memory}}
 
 
@@ -292,6 +299,21 @@ def _overall_status(snapshot: dict) -> str:
 def _worse_status(left: str, right: str) -> str:
     order = {"critical": 4, "warning": 3, "healthy": 2, "unknown": 1, "unsupported": 1}
     return left if order.get(left, 1) >= order.get(right, 1) else right
+
+
+def _should_retry_with_sudo(command: list[str], result: CommandResult) -> bool:
+    if result.returncode == 0:
+        return False
+    if not command or command[0] not in PRIVILEGED_COMMANDS:
+        return False
+    combined_output = f"{result.stderr}\n{result.stdout}".lower()
+    markers = (
+        "permission denied",
+        "operation not permitted",
+        "must be root",
+        "insufficient permissions",
+    )
+    return any(marker in combined_output for marker in markers)
 
 
 if __name__ == "__main__":

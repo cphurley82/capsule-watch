@@ -1,0 +1,2 @@
+Filesystem Type 1024-blocks Used Available Capacity Mounted on
+/dev/sda1 ext4 1000 100 900 10% /mnt/backups

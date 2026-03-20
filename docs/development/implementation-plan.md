@@ -1,5 +1,15 @@
 # Implementation Plan
 
+## Current snapshot (March 2026)
+
+- Phase 0 is complete.
+- Phase 1 scaffold is complete (`pyproject.toml`, `uv.lock`, package layout, config, snapshot helpers, web shell).
+- Phase 2 collector baseline is complete and tested.
+- Phase 3 basic dashboard/API endpoints are complete.
+- Phase 4 scheduling and alert state transitions are complete at baseline level; notification transport is still pending.
+- Phase 5 docs content exists in-repo; static-site build/publish automation is still pending.
+- Phase 6 hardening and release polish is in progress.
+
 ## Phase 0: Planning baseline
 
 Deliverables:

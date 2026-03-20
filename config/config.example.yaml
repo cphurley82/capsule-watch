@@ -1,0 +1,31 @@
+server:
+  host: 0.0.0.0
+  port: 8080
+
+paths:
+  # Set this to your real Time Machine root mount path.
+  time_machine_root: /srv/timecapsule
+  snapshot_file: /var/lib/capsule-watch/status.json
+  alerts_file: /var/lib/capsule-watch/alerts.json
+
+services:
+  samba_unit: smbd
+  avahi_unit: avahi-daemon
+
+thresholds:
+  backup_warning_hours: 26
+  backup_critical_hours: 48
+  disk_warning_percent: 85
+  disk_critical_percent: 95
+
+alerts:
+  email:
+    enabled: false
+    from: capsule-watch@example.com
+    to:
+      - you@example.com
+    smtp_host: smtp.example.com
+    smtp_port: 587
+    username: smtp-user
+    password: change-me
+    starttls: true

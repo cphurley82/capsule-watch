@@ -1,5 +1,9 @@
 # Setup Guide Website Plan
 
+## Status
+
+Partially implemented. Core guides now exist as Markdown pages in `docs/`; static-site build and publishing automation are still planned.
+
 ## Purpose
 
 The documentation site should help someone go from "I have an Ubuntu box" to "I have a working Time Machine server with Capsule Watch monitoring" without needing to piece together forum posts.

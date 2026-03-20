@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from capsule_watch.collectors import CommandResult, build_snapshot
+from capsule_watch import collectors
 from capsule_watch.config import load_config
 
 
@@ -33,7 +34,7 @@ def _runner_for_success(command: list[str], timeout: int = 10) -> CommandResult:
         return CommandResult(
             returncode=0,
             stdout=(
-                "Filesystem volume name: backup-202603a\n"
+                "Filesystem volume name: timecapsule-data\n"
                 "Mount count: 3\n"
                 "Maximum mount count: 39\n"
             ),
@@ -101,3 +102,85 @@ paths:
     assert snapshot["backups"]["status"] == "healthy"
     assert snapshot["filesystem"]["status"] == "healthy"
     assert snapshot["collector_errors"] == {}
+
+
+def test_privileged_command_retries_with_sudo() -> None:
+    calls: list[list[str]] = []
+
+    def fake_runner(command: list[str], timeout: int = 10) -> CommandResult:
+        calls.append(command)
+        if command == ["smartctl", "-H", "/dev/sda"]:
+            return CommandResult(returncode=2, stdout="", stderr="Permission denied")
+        if command == ["sudo", "-n", "smartctl", "-H", "/dev/sda"]:
+            return CommandResult(
+                returncode=0,
+                stdout="SMART overall-health self-assessment test result: PASSED\n",
+                stderr="",
+            )
+        raise AssertionError(f"Unexpected command: {command}")
+
+    result = collectors.run_command_with_optional_sudo(
+        ["smartctl", "-H", "/dev/sda"],
+        base_runner=fake_runner,
+    )
+
+    assert result.returncode == 0
+    assert calls == [
+        ["smartctl", "-H", "/dev/sda"],
+        ["sudo", "-n", "smartctl", "-H", "/dev/sda"],
+    ]
+
+
+def test_non_privileged_command_is_not_retried_with_sudo() -> None:
+    calls: list[list[str]] = []
+
+    def fake_runner(command: list[str], timeout: int = 10) -> CommandResult:
+        calls.append(command)
+        return CommandResult(returncode=1, stdout="", stderr="some other failure")
+
+    result = collectors.run_command_with_optional_sudo(
+        ["df", "-Pk", "/tmp"],
+        base_runner=fake_runner,
+    )
+
+    assert result.returncode == 1
+    assert calls == [["df", "-Pk", "/tmp"]]
+
+
+def test_collect_filesystem_health_retries_tune2fs_with_sudo() -> None:
+    calls: list[list[str]] = []
+
+    def fake_runner(command: list[str], timeout: int = 10) -> CommandResult:
+        calls.append(command)
+        if command == ["df", "-PT", "/mnt/backups"]:
+            return CommandResult(
+                returncode=0,
+                stdout=(
+                    "Filesystem Type 1024-blocks Used Available Capacity Mounted on\n"
+                    "/dev/sda1 ext4 1000 100 900 10% /mnt/backups\n"
+                ),
+                stderr="",
+            )
+        if command == ["tune2fs", "-l", "/dev/sda1"]:
+            return CommandResult(returncode=1, stdout="", stderr="Permission denied")
+        if command == ["sudo", "-n", "tune2fs", "-l", "/dev/sda1"]:
+            return CommandResult(
+                returncode=0,
+                stdout=(
+                    "Filesystem volume name: timecapsule-data\n"
+                    "Mount count: 3\n"
+                    "Maximum mount count: 39\n"
+                ),
+                stderr="",
+            )
+        raise AssertionError(f"Unexpected command: {command}")
+
+    result = collectors.collect_filesystem_health("/mnt/backups", fake_runner)
+
+    assert result["status"] == "healthy"
+    assert result["items"]["device"] == "/dev/sda1"
+    assert calls == [
+        ["df", "-PT", "/mnt/backups"],
+        ["tune2fs", "-l", "/dev/sda1"],
+        ["sudo", "-n", "tune2fs", "-l", "/dev/sda1"],
+    ]

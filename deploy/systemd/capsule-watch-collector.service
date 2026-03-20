@@ -1,0 +1,12 @@
+[Unit]
+Description=Capsule Watch collector run
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=capsule-watch
+Group=capsule-watch
+WorkingDirectory=/opt/capsule-watch
+Environment=PATH=/opt/capsule-watch/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+Environment=CAPSULE_WATCH_CONFIG=/etc/capsule-watch/config.yaml
+ExecStart=/usr/bin/env capsule-watch-collectors --config /etc/capsule-watch/config.yaml

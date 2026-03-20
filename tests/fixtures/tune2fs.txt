@@ -1,0 +1,7 @@
+tune2fs 1.47.0 (5-Feb-2023)
+Filesystem volume name:   timecapsule-data
+Last mounted on:          /srv/timecapsule
+Filesystem UUID:          11111111-2222-3333-4444-555555555555
+Filesystem magic number:  0xEF53
+Mount count:              3
+Maximum mount count:      39

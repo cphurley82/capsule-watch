@@ -69,10 +69,14 @@ class AppConfig:
 def load_config(path: str | Path) -> AppConfig:
     """Load and validate configuration from YAML."""
     path_obj = Path(path)
-    if not path_obj.exists():
+    try:
+        raw_text = path_obj.read_text(encoding="utf-8")
+    except FileNotFoundError:
         return AppConfig()
+    except PermissionError as exc:
+        raise ConfigError(f"Permission denied reading config file: {path_obj}") from exc
 
-    raw = yaml.safe_load(path_obj.read_text(encoding="utf-8"))
+    raw = yaml.safe_load(raw_text)
     if raw is None:
         raw = {}
     if not isinstance(raw, dict):

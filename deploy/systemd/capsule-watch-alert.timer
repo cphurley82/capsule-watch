@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Capsule Watch alert evaluation on a schedule
+
+[Timer]
+OnBootSec=3m
+OnUnitActiveSec=15m
+Persistent=true
+Unit=capsule-watch-alert.service
+
+[Install]
+WantedBy=timers.target

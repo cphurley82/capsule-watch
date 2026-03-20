@@ -1,0 +1,18 @@
+[Unit]
+Description=Capsule Watch web application
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=capsule-watch
+Group=capsule-watch
+WorkingDirectory=/opt/capsule-watch
+Environment=PATH=/opt/capsule-watch/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+Environment=CAPSULE_WATCH_CONFIG=/etc/capsule-watch/config.yaml
+ExecStart=/usr/bin/env capsule-watch-web --config /etc/capsule-watch/config.yaml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

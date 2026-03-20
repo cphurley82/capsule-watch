@@ -1,66 +1,103 @@
-# Disk Formatting and Configuration
-For optimal disk setup and partitioning, see [Disk Formatting for Time Machine](disk-formatting-for-time-machine.md).
 # DIY Time Capsule: Ubuntu + Samba Setup
 
-## 1. Install Ubuntu
-- Download and install the latest Ubuntu Server or Desktop.
-- Update packages:
-  ```
-  sudo apt update && sudo apt upgrade
-  ```
+This guide helps you create a working Time Machine destination on Ubuntu before installing Capsule Watch.
 
-## 2. Install Required Utilities
-- Install Samba and SSH:
-  ```
-  sudo apt install samba avahi-daemon openssh-server
-  ```
+For disk preparation and mounting details, see [Disk Formatting for Time Machine](disk-formatting-for-time-machine.md).
 
-## 3. Configure Samba for Time Capsule
-- Edit Samba config:
-  ```
-  sudo vim /etc/samba/smb.conf
-  ```
-- Add a share section:
-  ```
-  [TimeCapsule]
-  path = /srv/timecapsule
-  browseable = yes
-  guest ok = no
-  read only = no
-  vfs objects = fruit
-  fruit:time machine = yes
-  fruit:advertise_fullsync = true
-  ```
-- Create the share directory:
-  ```
-  sudo mkdir -p /srv/timecapsule
-  sudo chown nobody:nogroup /srv/timecapsule
-  sudo chmod 777 /srv/timecapsule
-  ```
+## 1. Install base packages
 
-## 4. Set Up Samba User
-- Create a user for backups:
-  ```
-  sudo smbpasswd -a <username>
-  ```
+```bash
+sudo apt update
+sudo apt install -y samba avahi-daemon openssh-server
+```
 
-## 5. Restart Services
-- Restart Samba and Avahi:
-  ```
-  sudo systemctl restart smbd nmbd avahi-daemon
-  ```
+## 2. Create a backup user and group
 
-## 6. Connect from macOS
-- Open Finder → Go → Connect to Server: `smb://<ubuntu-server-ip>/TimeCapsule`
-- Authenticate with Samba user credentials.
-- Select the share as a Time Machine destination in System Preferences.
+Use a dedicated account for SMB authentication:
 
-## 7. Verify Backups
-- Start a backup from macOS.
-- Confirm files appear in `/srv/timecapsule`.
+```bash
+sudo groupadd --force tmbackup
+sudo useradd -M -s /usr/sbin/nologin -g tmbackup timemachine
+sudo smbpasswd -a timemachine
+```
 
----
+Use a different username if you prefer, but keep it dedicated to backup access.
 
-### What is avahi-daemon?
+## 3. Prepare the backup path
 
-`avahi-daemon` is a service that implements mDNS (Multicast DNS) and DNS-SD (Service Discovery), also known as "Bonjour" on macOS. It allows your Ubuntu server to advertise the Time Machine share so Macs can discover it automatically in the network. Without Avahi, you may need to manually enter the server address on the Mac. For Time Machine over Samba, Avahi is recommended for seamless detection and connection.
+Assume your mounted backup root is `/srv/timecapsule` (or your chosen mount point from the disk-formatting guide):
+
+```bash
+sudo mkdir -p /srv/timecapsule
+sudo chown root:tmbackup /srv/timecapsule
+sudo chmod 2770 /srv/timecapsule
+```
+
+`2770` keeps the directory private and sets the setgid bit so files inherit the `tmbackup` group.
+
+## 4. Configure Samba share
+
+Edit `/etc/samba/smb.conf`:
+
+```bash
+sudoedit /etc/samba/smb.conf
+```
+
+Add a share block:
+
+```ini
+[TimeCapsule]
+path = /srv/timecapsule
+browseable = yes
+read only = no
+guest ok = no
+valid users = timemachine
+create mask = 0660
+directory mask = 2770
+vfs objects = catia fruit streams_xattr
+fruit:time machine = yes
+fruit:advertise_fullsync = true
+```
+
+Validate config before restart:
+
+```bash
+testparm -s
+```
+
+## 5. Enable and restart services
+
+```bash
+sudo systemctl enable --now smbd avahi-daemon
+sudo systemctl restart smbd avahi-daemon
+```
+
+Check status:
+
+```bash
+systemctl status smbd --no-pager --lines=0
+systemctl status avahi-daemon --no-pager --lines=0
+```
+
+## 6. Connect from macOS and run first backup
+
+1. On the Mac, open Finder and connect to `smb://<ubuntu-server-ip>/TimeCapsule`.
+2. Authenticate with the Samba credentials (`timemachine` in this guide).
+3. In Time Machine settings, select this share as a destination.
+4. Start an initial backup.
+
+## 7. Verify backup artifacts on Ubuntu
+
+```bash
+find /srv/timecapsule -maxdepth 1 -type d -name '*.sparsebundle'
+```
+
+You should see one sparsebundle directory per Mac that has backed up.
+
+## 8. Next step
+
+Once backups are working, continue with [Install Capsule Watch](install-capsule-watch.md).
+
+## What `avahi-daemon` does
+
+`avahi-daemon` provides Bonjour/mDNS advertisement so Macs can discover the Samba Time Machine target on the local network without manually entering the address each time.
