@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="refresh" content="30">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Capsule Watch</title>
+    <style>
+      :root {
+        --bg: #f5f7fb;
+        --card: #ffffff;
+        --text: #172235;
+        --muted: #5d6b82;
+        --border: #dbe2ef;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at 20% 20%, #e6f1ff 0, transparent 28%),
+          radial-gradient(circle at 80% 0%, #fff6e8 0, transparent 36%),
+          var(--bg);
+      }
+      .page {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 1.25rem;
+      }
+      .topbar {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 1rem;
+        align-items: start;
+        margin-bottom: 1rem;
+      }
+      h1 { margin: 0; font-size: 2rem; }
+      .subtle { color: var(--muted); margin: 0.35rem 0; }
+      .status {
+        display: inline-block;
+        padding: 0.2rem 0.5rem;
+        border-radius: 999px;
+        font-size: 0.85rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+      .healthy { background: #def7e7; color: #136f3d; }
+      .warning { background: #fff4ce; color: #8a6100; }
+      .critical { background: #fde2e1; color: #8f1d1b; }
+      .unknown, .unsupported { background: #eef0f2; color: #374151; }
+      .summary {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 0.9rem 1rem;
+        min-width: 240px;
+      }
+      .summary p { margin: 0.35rem 0; }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 1rem;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 0.9rem 1rem;
+      }
+      .card.wide { grid-column: 1 / -1; }
+      .card-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        margin-bottom: 0.7rem;
+      }
+      .card-head h2 { margin: 0; font-size: 1rem; }
+      .message {
+        margin: 0.4rem 0 0.7rem;
+        padding: 0.5rem 0.6rem;
+        border-radius: 8px;
+        background: #fff8df;
+        border: 1px solid #f3e2a6;
+        color: #6a4b00;
+      }
+      .empty { color: var(--muted); margin: 0; }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.92rem;
+      }
+      th, td {
+        text-align: left;
+        border-bottom: 1px solid #edf1f7;
+        padding: 0.38rem 0.2rem;
+        vertical-align: top;
+      }
+      th { color: var(--muted); font-weight: 600; }
+      tr:last-child td { border-bottom: 0; }
+      pre {
+        margin: 0.5rem 0 0;
+        max-height: 220px;
+        overflow: auto;
+        font-size: 0.8rem;
+        background: #f7f9fc;
+        padding: 0.65rem;
+        border-radius: 8px;
+      }
+      code {
+        background: #edf2ff;
+        padding: 0.1rem 0.25rem;
+        border-radius: 5px;
+      }
+      a { color: #0048a8; }
+      @media (max-width: 760px) {
+        .topbar { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <header class="topbar">
+        <section>
+          <h1>Capsule Watch</h1>
+          <p class="subtle">Generated at: <code data-testid="generated-at">{{ meta.generated_at }}</code></p>
+          <p class="subtle">
+            Snapshot age: <strong>{{ meta.age_label }}</strong>
+            <span class="status {{ meta.freshness_status }}" data-testid="snapshot-freshness">{{ meta.freshness_label }}</span>
+          </p>
+        </section>
+        <aside class="summary">
+          <p><strong>Overall status</strong></p>
+          <p><span class="status {{ meta.overall_status }}" data-testid="overall-status">{{ meta.overall_status }}</span></p>
+          <p><a href="/api/status">View raw status JSON</a></p>
+        </aside>
+      </header>
+
+      <section class="grid">
+        {% for section in sections %}
+        <article class="card" data-testid="section-{{ section.test_id }}">
+          <div class="card-head">
+            <h2>{{ section.title }}</h2>
+            <span class="status {{ section.status }}">{{ section.status }}</span>
+          </div>
+          {% if section.message %}
+          <p class="message">{{ section.message }}</p>
+          {% endif %}
+
+          {% if section.table_rows %}
+          <table>
+            <thead>
+              <tr>
+                {% for header in section.table_headers %}
+                <th>{{ header }}</th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in section.table_rows %}
+              <tr>
+                {% for cell in row %}
+                <td>{{ cell }}</td>
+                {% endfor %}
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          {% elif section.rows %}
+          <table>
+            <tbody>
+              {% for row in section.rows %}
+              <tr>
+                <th>{{ row[0] }}</th>
+                <td>{{ row[1] }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          {% else %}
+          <p class="empty">No data reported.</p>
+          {% endif %}
+
+          {% for raw_block in section.raw_blocks %}
+          <details>
+            <summary>{{ raw_block[0] }}</summary>
+            <pre>{{ raw_block[1] }}</pre>
+          </details>
+          {% endfor %}
+        </article>
+        {% endfor %}
+
+        <article class="card wide" data-testid="collector-errors">
+          <div class="card-head">
+            <h2>Collector Errors</h2>
+            {% if collector_errors %}
+            <span class="status warning">warning</span>
+            {% else %}
+            <span class="status healthy">healthy</span>
+            {% endif %}
+          </div>
+          {% if collector_errors %}
+          <table>
+            <thead>
+              <tr><th>Collector</th><th>Error</th></tr>
+            </thead>
+            <tbody>
+              {% for error in collector_errors %}
+              <tr>
+                <th>{{ error[0] }}</th>
+                <td>{{ error[1] }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          {% else %}
+          <p class="empty">No collector errors.</p>
+          {% endif %}
+        </article>
+      </section>
+    </main>
+  </body>
+</html>
