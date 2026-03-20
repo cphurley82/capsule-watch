@@ -1,8 +1,11 @@
-# Development Workflow
+# Development Standards
 
-## Status
+## Purpose
 
-Active. This document reflects the current `uv`-based workflow used in this repository.
+This document defines development standards and expectations.
+
+For setup and day-to-day commands, use the canonical runbook:
+- [Local development guide](local-development.md)
 
 ## Tooling baseline
 
@@ -11,29 +14,19 @@ Active. This document reflects the current `uv`-based workflow used in this repo
 - Keep the project on a pinned Python version via `.python-version`
 - Use a `src/` layout for the application package
 
-## Core commands
-
-Environment setup:
-
-- `uv sync`
-- `uv sync --extra dev`
-
-Test:
-
-- `uv run pytest`
-- `uv run pytest -q`
-
-Run app CLIs:
-
-- `uv run capsule-watch-collectors --config /etc/capsule-watch/config.yaml`
-- `uv run capsule-watch-alerts --config /etc/capsule-watch/config.yaml`
-- `uv run capsule-watch-web --config /etc/capsule-watch/config.yaml`
-
-## TDD expectation
+## Development expectations
 
 - Add or update tests before implementing behavior changes when practical
 - Prefer small fixture-driven unit tests for parser and collector logic
 - Keep integration checks lightweight and focused on snapshot generation and web endpoints
+- Keep user and development docs aligned with implementation changes
+
+## Definition of ready-to-commit
+
+- `uv run pytest -q` passes locally
+- New behavior is covered by tests
+- Docs are updated for user-visible or operator-visible changes
+- Staged changes avoid machine-specific paths, hostnames, and secrets
 
 ## Why `uv`
 

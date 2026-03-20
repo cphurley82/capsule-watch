@@ -38,6 +38,9 @@ Typical local development commands:
 - `uv run capsule-watch-alerts --config /etc/capsule-watch/config.yaml`
 - `uv run capsule-watch-web --config /etc/capsule-watch/config.yaml`
 
+For command-by-command setup and iteration, see [Local development guide](docs/development/local-development.md).  
+For development standards and commit expectations, see [Development standards](docs/development/development-standards.md).
+
 ## Repo layout
 
 - `docs/` contains user-facing setup and troubleshooting documentation
