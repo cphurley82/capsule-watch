@@ -1,56 +1,96 @@
 # Capsule Watch
 
-Capsule Watch is a self-hosted monitoring dashboard for a DIY Apple Time Machine backup server running on Ubuntu.
+Capsule Watch is a self-hosted monitoring and recovery dashboard for DIY Apple Time Machine servers running on Ubuntu.
 
-The project has two deliverables:
+It helps you answer the questions that matter after setup:
 
-- A local-first monitoring app for the backup server
-- A companion documentation set with setup and troubleshooting guides
+- Are Macs still backing up recently enough?
+- Is the backup volume getting full?
+- Is the drive healthy?
+- Are Samba and Avahi running?
+- Can I still mount a backup and recover files from another Mac?
 
-## What works today
+Capsule Watch is designed for local-network, single-host deployments where you want clear status and practical recovery guidance without logging into Ubuntu to manually check everything.
 
-The repository includes a tested initial implementation with:
+## Features
 
-- Config loading and validation from YAML
-- Snapshot persistence and loading from local disk
-- Collectors for backup recency, storage, SMART health, services, filesystem metadata, and host telemetry
-- Alert transition evaluation with persisted active state
-- Flask web endpoints for `/`, `/recovery`, `/healthz`, and `/api/status`
-- Versioned `systemd` units and timers for web, collector, and alert jobs
+- Read-only web dashboard with overall health status and per-section detail
+- Backup freshness checks based on sparsebundle activity
+- Storage usage reporting for the Time Machine volume
+- SMART overall health collection for the backup drive
+- Service checks for Samba and Avahi
+- ext4 filesystem metadata checks when supported
+- Host telemetry such as uptime and memory usage
+- Recovery Assistant page that generates validated Mac recovery commands
+- JSON status API at `/api/status`
+- `systemd` services and timers for web, collectors, and alert evaluation
 
-Email delivery and push channels are still planned enhancements. The current alert service computes transitions and stores state.
+Current releases focus on local monitoring, recovery guidance, and persisted alert state. Outbound notification delivery is not wired in yet.
 
-## User docs
+## Requirements
 
-- [DIY Time Capsule setup](docs/diy-time-capsule-setup.md) (Ubuntu + Samba)
+Capsule Watch assumes:
+
+- an Ubuntu host already configured as a working Samba Time Machine destination
+- `systemd` as the service manager
+- Python 3.12+ and `uv`
+- `smartctl`, `df`, `free`, `uptime`, and `systemctl` available on the host
+- local or LAN access to the dashboard
+
+Recommended:
+
+- ext4 for the backup volume if you want filesystem metadata checks
+- `avahi-daemon` if you rely on Bonjour discovery from Macs
+
+## Quick Start
+
+1. Prepare the backup disk and mount point:
+   [Disk formatting for Time Machine](docs/disk-formatting-for-time-machine.md)
+2. Configure Samba and verify Time Machine backups are working:
+   [DIY Time Capsule setup](docs/diy-time-capsule-setup.md)
+3. Install Capsule Watch on the Ubuntu server:
+   [Install Capsule Watch](docs/install-capsule-watch.md)
+4. Validate recovery from another Mac:
+   [Verify and restore Time Machine backups](docs/verify-and-restore-time-machine-backups.md)
+
+After installation, open:
+
+- `http://<server-ip>:8080/` for the dashboard
+- `http://<server-ip>:8080/recovery` for guided recovery commands
+
+## Documentation
+
+### For Operators
+
+- [Install Capsule Watch](docs/install-capsule-watch.md)
+- [DIY Time Capsule setup](docs/diy-time-capsule-setup.md)
 - [Disk formatting for Time Machine](docs/disk-formatting-for-time-machine.md)
-- [Verify and restore Time Machine backups (CLI)](docs/verify-and-restore-time-machine-backups.md)
-- [Install Capsule Watch](docs/install-capsule-watch.md) (service user, config, sudoers, `systemd`)
+- [Verify and restore Time Machine backups](docs/verify-and-restore-time-machine-backups.md)
 
-## Python workflow
+### For Contributors
 
-Capsule Watch uses `uv` for Python version pinning, dependency locking, environment sync, and common project commands.
+- [Development docs index](docs/development/README.md)
 
-Typical local development commands:
+## How It Works
 
-- `uv sync --extra dev`
-- `uv run pytest -q`
-- `uv run capsule-watch-collectors --config /etc/capsule-watch/config.yaml`
-- `uv run capsule-watch-alerts --config /etc/capsule-watch/config.yaml`
-- `uv run capsule-watch-web --config /etc/capsule-watch/config.yaml`
+Capsule Watch keeps expensive checks out of the request path.
 
-For command-by-command setup and iteration, see [Local development guide](docs/development/local-development.md).  
-For development standards and commit expectations, see [Development standards](docs/development/development-standards.md).
+1. Scheduled collectors gather backup and host state on the Ubuntu server.
+2. The latest snapshot is written to local disk.
+3. The web UI reads that snapshot and renders the dashboard and recovery workflow.
+4. A separate alert evaluator tracks state transitions for future notification delivery.
 
-## Repo layout
+That model keeps the web UI fast, predictable, and safe to expose on a trusted local network.
 
-- `docs/` contains user-facing setup and troubleshooting documentation
-- `docs/development/` contains development-focused docs, plans, and ADRs
-- `config/config.example.yaml` is the versioned baseline runtime config
-- `deploy/systemd/` contains versioned `systemd` unit and timer files
-- `src/capsule_watch/` contains the application package
-- `tests/` contains unit and fixture-based tests
+## Contributing
 
-## Current status
+Capsule Watch uses `uv` for environment management and test execution.
 
-The foundation is in place and running locally with `systemd`. Next milestones are production hardening, richer dashboard UX, and full notification delivery.
+Typical contributor workflow:
+
+```bash
+uv sync --extra dev
+uv run pytest -q
+```
+
+For the full contributor workflow, coding expectations, and architecture notes, start with [Development docs index](docs/development/README.md).

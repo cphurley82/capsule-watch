@@ -368,9 +368,12 @@ If the web service is running, open:
 
 ```text
 http://<server-ip>:8080/
+http://<server-ip>:8080/recovery
 ```
 
-You should expect the dashboard to show the latest saved snapshot rather than collecting live data during page loads.
+The main dashboard should show the latest saved snapshot rather than collecting live data during page loads.
+
+The Recovery Assistant page should show discovered sparsebundle backups and copyable recovery commands for mounting and browsing backups from another Mac.
 
 ## 11. Email alerts (planned)
 

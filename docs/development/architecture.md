@@ -2,24 +2,25 @@
 
 ## Summary
 
-Capsule Watch is a small Python application paired with scheduled collectors. The operational principle is simple: collect system and backup metrics on a schedule, persist a snapshot locally, and render the latest known state through a read-only web dashboard.
+Capsule Watch is a small Python application paired with scheduled collectors. The operational principle is simple: collect system and backup metrics on a schedule, persist a snapshot locally, and render the latest known state through a read-only web UI.
 
-## Implementation status (March 2026)
+## Current implementation (March 2026)
 
 Implemented:
 
-- Flask app with `/`, `/healthz`, and `/api/status`
+- Flask app with `/`, `/recovery`, `/healthz`, and `/api/status`
+- Recovery Assistant page with generated Mac recovery commands
 - Collector CLI writing snapshots to disk
 - Alert CLI evaluating transition state and persisting active alerts
 - `systemd` service and timer unit templates
-- Core docs for DIY setup, disk formatting, and Capsule Watch installation
+- Core docs for DIY setup, disk formatting, installation, and restore validation
 
-Planned or partial:
+Still to do:
 
 - Notification delivery (email transport implementation)
 - Push channels
-- Rich dashboard UI beyond the current basic status page
-- Optional static-site generator pipeline for docs publishing
+- Deeper SMART and host telemetry detail
+- Optional static-site build and publishing pipeline for docs
 
 ## System context
 
@@ -30,14 +31,14 @@ The target environment is an Ubuntu server already configured as a Time Machine 
 ### 1. Web application
 
 - Python application using Flask and Jinja templates
-- Serves the dashboard UI and a small JSON API
+- Serves the dashboard UI, Recovery Assistant UI, and a small JSON API
 - Reads the latest snapshot from disk instead of running expensive checks in the request path
 - Intended for local-network access only
 
 ### 2. Collector service
 
 - Runs on a schedule via `systemd` timer
-- Keeps the collection cadence outside the web UI in the MVP; a later enhancement can let the local dashboard write a validated timer override
+- Keeps the collection cadence outside the current web UI; a later enhancement can let the local dashboard write a validated timer override
 - Executes read-mostly collectors and writes a normalized snapshot file
 - Handles timeouts and partial failures per collector
 - Produces both a machine-readable snapshot and operator-friendly log messages
@@ -53,8 +54,8 @@ The target environment is an Ubuntu server already configured as a Time Machine 
 ### 4. Static documentation site
 
 - Maintained as Markdown in the repo
-- Ready to publish as a static site for GitHub Pages or optional local hosting
-- Contains both DIY Time Capsule setup instructions and Capsule Watch install/configuration steps
+- Can be read directly in the repository today
+- Can later be published as a static site if that becomes useful
 
 ## Python environment strategy
 
@@ -129,16 +130,16 @@ Suggested top-level sections:
 1. Collector timer triggers the collector service.
 2. Collectors run independently with timeouts.
 3. Service writes a complete snapshot and notes any partial failures.
-4. Web app reads the latest snapshot and renders the dashboard.
+4. Web app reads the latest snapshot and renders the dashboard and Recovery Assistant.
 5. Alert timer evaluates thresholds and records transition state; notification delivery is a planned follow-on.
 
 ## Security model
 
-- Dashboard is read-only in the MVP
+- Dashboard and Recovery Assistant are read-only
 - No public internet exposure
 - Use a dedicated service user with no shell
 - Limit sudo access to specific commands such as `smartctl`
-- Keep disruptive maintenance actions out of the MVP dashboard; a later local-only workflow can let an operator gracefully take the Time Machine share offline before starting a disk check
+- Keep disruptive maintenance actions out of the web UI; prefer documented command sequences over browser-triggered privileged actions
 - Prefer reverse proxy or SSH port forwarding over exposing raw application ports externally
 
 ## Privileged command strategy
@@ -171,7 +172,7 @@ Initial deployment should be simple:
 
 - Avoid collecting live metrics during page loads so the dashboard stays responsive
 - Prefer `systemd` timers over cron for better observability and service-level control
-- Keep scheduler changes out of the MVP dashboard, then consider a guarded local-only UI control for adjusting check frequency later
+- Keep scheduler changes out of the current web UI, then consider a guarded local-only UI control for adjusting check frequency later
 - Treat manual repair flows separately from passive monitoring; a future enhancement can add a guided "take share offline and run disk check" action
 - Keep the docs site separate from the runtime dashboard so instructional content can evolve independently
 - Support graceful degradation where host-specific tools or filesystems differ

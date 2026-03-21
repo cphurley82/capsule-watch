@@ -1,4 +1,4 @@
-# Verify And Restore Time Machine Backups (CLI)
+# Verify and Restore Time Machine Backups
 
 This guide is for two jobs:
 
@@ -89,54 +89,66 @@ If needed, you can also discover shares from the server:
 testparm -s 2>/dev/null | sed -n 's/^\[\(.*\)\]$/\1/p' | grep -Ev '^(global|printers|print\$)$'
 ```
 
-### 2.2 Mount the SMB share
+### 2.2 Define the recovery variables and clean up old mounts
 
-For terminal or SSH sessions, use `mount_smbfs`. This is more reliable than `open smb://...`.
+This validated flow uses a normal `/Volumes/<share-name>` mount on the recovery Mac.
 
 `Mac (different Mac)`:
 
 ```bash
+cd ~
 SERVER_HOST="192.168.1.10"
 SMB_USER="backupuser"
-MOUNT_POINT="$HOME/mnt/tm-share"
-mkdir -p "$MOUNT_POINT"
-mount_smbfs "//$SMB_USER@$SERVER_HOST/$SHARE_NAME" "$MOUNT_POINT"
-mount | grep "$MOUNT_POINT"
+SHARE_NAME="timemachine"
+BUNDLE_NAME="My-Source-Mac.sparsebundle"
 ```
 
-When mounted this way, the network share appears at `"$MOUNT_POINT"`.
-
-### 2.3 Find the source Mac sparsebundle
+Before remounting, detach any older backup image mounts and unmount any stale SMB mount for the same share:
 
 `Mac (different Mac)`:
 
 ```bash
-find "$MOUNT_POINT" -maxdepth 1 -type d -name '*.sparsebundle' -print
-SOURCE_BUNDLE="$(find "$MOUNT_POINT" -maxdepth 1 -type d -name '*.sparsebundle' | head -n 1)"
-SOURCE_MAC_NAME="$(basename "$SOURCE_BUNDLE" .sparsebundle)"
-echo "SOURCE_BUNDLE=$SOURCE_BUNDLE"
-echo "SOURCE_MAC_NAME=$SOURCE_MAC_NAME"
+hdiutil info | awk '/Backups of /{print $1}' | while read -r dev; do hdiutil detach -force "$dev"; done
+for mp in $(mount | awk -v s="/$SHARE_NAME " '$0 ~ /smbfs/ && index($0,s){print $3}'); do diskutil unmount force "$mp"; done
 ```
 
-If more than one sparsebundle is listed, choose the correct one and set `SOURCE_BUNDLE` manually.
+### 2.3 Mount the SMB share
+
+`Mac (different Mac)`:
+
+```bash
+SHARE_MOUNT="/Volumes/$SHARE_NAME"
+sudo mkdir -p "$SHARE_MOUNT"
+sudo chown "$USER":staff "$SHARE_MOUNT"
+mount_smbfs "//$SMB_USER@$SERVER_HOST/$SHARE_NAME" "$SHARE_MOUNT"
+find "$SHARE_MOUNT" -maxdepth 1 -type d -name '*.sparsebundle' -print
+```
+
+That final `find` command should list the sparsebundle you intend to inspect.
+
+If more than one sparsebundle is listed, choose the right one and set `BUNDLE_NAME` manually before continuing.
 
 ### 2.4 Attach the backup read-only
 
 `Mac (different Mac)`:
 
 ```bash
+SOURCE_BUNDLE="$SHARE_MOUNT/$BUNDLE_NAME"
+test -d "$SOURCE_BUNDLE"
 hdiutil attach -readonly "$SOURCE_BUNDLE"
 ```
 
 Success looks like this pattern:
 
 ```text
-/dev/disk2
-/dev/disk3              EF57347C-0000-11AA-AA11-0030654
-/dev/disk3s1            41504653-0000-11AA-AA11-0030654 /Volumes/Backups of My-Source-Mac
+/dev/disk4
+/dev/disk5              EF57347C-0000-11AA-AA11-0030654
+/dev/disk5s1            41504653-0000-11AA-AA11-0030654 /Volumes/Backups of My-Source-Mac
 ```
 
-If `hdiutil attach` fails with `Resource busy`, the sparsebundle is usually locked by another Mac or stale SMB state. This recovery path often fixes it:
+If `hdiutil attach` fails with `Resource busy`, the sparsebundle is usually locked by another Mac or stale Samba session state.
+
+Try this on the server:
 
 `Ubuntu server`:
 
@@ -145,91 +157,84 @@ sudo smbstatus
 sudo systemctl restart smbd
 ```
 
-`Mac (different Mac)`:
+Then on the recovery Mac, remount the SMB share from section **2.3** and retry `hdiutil attach -readonly "$SOURCE_BUNDLE"`.
 
-```bash
-umount "$MOUNT_POINT" 2>/dev/null || true
-mount_smbfs "//$SMB_USER@$SERVER_HOST/$SHARE_NAME" "$MOUNT_POINT"
-hdiutil attach -readonly "$SOURCE_BUNDLE"
-```
-
-### 2.5 Find the mounted backup volume and latest snapshot
+### 2.5 Browse the mounted backup
 
 `Mac (different Mac)`:
 
 ```bash
-ls -d "/Volumes/Backups of "* 2>/dev/null
-MP="$(ls -d "/Volumes/Backups of "* 2>/dev/null | grep "$SOURCE_MAC_NAME" | head -n 1)"
-echo "MP=$MP"
-sudo tmutil listbackups -m "$MP"
-SNAP="$(sudo tmutil listbackups -m "$MP" | tail -n 1)"
-echo "SNAP=$SNAP"
+BACKUP_VOLUME="/Volumes/Backups of ${BUNDLE_NAME%.sparsebundle}"
+open "$BACKUP_VOLUME"
+ls -la "$BACKUP_VOLUME" || sudo ls -la "$BACKUP_VOLUME"
+find "$BACKUP_VOLUME" -maxdepth 2 -type d | head -n 40 || sudo find "$BACKUP_VOLUME" -maxdepth 2 -type d | head -n 40
 ```
 
-### 2.6 Browse the backup contents
+If you can list the backup root and see snapshot directories such as `2026-03-20-161440.previous`, the backup is mounted and readable.
 
-Start by identifying the source volume and user folders:
+If you see `Operation not permitted`, give Terminal or iTerm Full Disk Access in macOS Privacy settings and retry.
+
+### 2.6 Drill down to the file you want
+
+From the snapshot list, choose the snapshot and source volume you want:
 
 `Mac (different Mac)`:
 
 ```bash
-sudo ls "$SNAP"
-VOL="Macintosh HD - Data"
-sudo ls "$SNAP/$VOL/Users"
-SOURCE_USER_NAME="myuser"
-sudo ls -la "$SNAP/$VOL/Users/$SOURCE_USER_NAME"
-sudo find "$SNAP/$VOL/Users/$SOURCE_USER_NAME" -maxdepth 2 -type f | head -n 40
+cd "$BACKUP_VOLUME"
+ls
 ```
 
-If `VOL="Macintosh HD - Data"` does not exist, choose a volume name from the `sudo ls "$SNAP"` output.
-
-At this point you can spot-check files directly. For example:
-
-`Mac (different Mac)`:
+Example:
 
 ```bash
-ls "$SNAP/$VOL/Users/$SOURCE_USER_NAME/Documents"
-cat "$SNAP/$VOL/Users/$SOURCE_USER_NAME/Documents/example.txt"
+SNAPSHOT_NAME="2026-03-20-161440.previous"
+SOURCE_VOLUME="Macintosh HD - Data"
+cd "$BACKUP_VOLUME/$SNAPSHOT_NAME/$SOURCE_VOLUME"
+ls
 ```
 
-If you can successfully run `ls` or `cat` on files inside the mounted backup, that is already strong proof that the backup data is readable.
+At this point you can browse normally with `cd`, `ls`, `find`, `cat`, or `open`.
 
 ### 2.7 Copy files out
 
-For a simple recovery test, use `rsync` first. It is a good default because it preserves timestamps and is better suited to large or repeated copies than plain `cp`.
+Use `rsync` as the default recovery tool. It is a good fit for both single files and large directory trees.
 
 `Mac (different Mac)`:
 
 ```bash
-SRC="$SNAP/$VOL/Users/$SOURCE_USER_NAME/Documents/example.txt"
-mkdir -p "$HOME/Recovered-test"
-rsync -a --progress "$SRC" "$HOME/Recovered-test/"
-ls -l "$HOME/Recovered-test/$(basename "$SRC")"
+BACKUP_VOLUME="/Volumes/Backups of ${BUNDLE_NAME%.sparsebundle}"
+SNAPSHOT_NAME="<snapshot-name>.previous"
+SOURCE_VOLUME="<source-volume>"
+SOURCE_REL_PATH="<path-inside-source-volume>"
+SOURCE_PATH="$BACKUP_VOLUME/$SNAPSHOT_NAME/$SOURCE_VOLUME/$SOURCE_REL_PATH"
+echo "$SOURCE_PATH"
+mkdir -p "$HOME/Recovered-from-TimeMachine"
+rsync -avh "$SOURCE_PATH" "$HOME/Recovered-from-TimeMachine/"
 ```
 
-If you prefer a Time Machine-aware restore command, use:
-
-`Mac (different Mac)`:
+For example, if you want to recover a directory from `Users/alex/Pictures/photo-library`:
 
 ```bash
-SRC="$SNAP/$VOL/Users/$SOURCE_USER_NAME/Documents/example.txt"
-mkdir -p "$HOME/Recovered-test"
-DST="$HOME/Recovered-test/$(basename "$SRC")"
-sudo tmutil restore "$SRC" "$DST"
-ls -l "$DST"
+BACKUP_VOLUME="/Volumes/Backups of ${BUNDLE_NAME%.sparsebundle}"
+SNAPSHOT_NAME="2026-03-20-161440.previous"
+SOURCE_VOLUME="Macintosh HD - Data"
+SOURCE_REL_PATH="Users/alex/Pictures/photo-library"
+SOURCE_PATH="$BACKUP_VOLUME/$SNAPSHOT_NAME/$SOURCE_VOLUME/$SOURCE_REL_PATH"
+mkdir -p "$HOME/Recovered-from-TimeMachine"
+rsync -avh "$SOURCE_PATH" "$HOME/Recovered-from-TimeMachine/"
 ```
 
-If you only want the simplest possible direct copy, `cp "$SRC" "$HOME/Recovered-test/"` is still a fine fallback for a single file.
-
-If any of these commands restore the file into `~/Recovered-test`, recovery from the network backup is working.
+If `rsync` copies the file or directory into `~/Recovered-from-TimeMachine`, recovery from the network backup is working.
 
 ## 3. Cleanly detach after verification
 
 `Mac`:
 
 ```bash
-diskutil unmount "$MP" 2>/dev/null || true
-umount "$MOUNT_POINT" 2>/dev/null || true
+BACKUP_VOLUME="/Volumes/Backups of ${BUNDLE_NAME%.sparsebundle}"
+diskutil unmount "$BACKUP_VOLUME" 2>/dev/null || true
+diskutil unmount "$SHARE_MOUNT" 2>/dev/null || true
 ```
 
 ## 4. Troubleshooting
@@ -264,4 +269,4 @@ If needed, grant Terminal or iTerm Full Disk Access in macOS Privacy settings an
 
 ### Mounted share is empty or missing in `/Volumes`
 
-If you mounted with `mount_smbfs`, use `"$MOUNT_POINT"` instead of looking under `/Volumes/<share-name>`.
+If you mounted with `mount_smbfs`, make sure you are looking at the actual mount path you used, such as `"/Volumes/$SHARE_NAME"`.

@@ -5,7 +5,7 @@
 - Phase 0 is complete.
 - Phase 1 scaffold is complete (`pyproject.toml`, `uv.lock`, package layout, config, snapshot helpers, web shell).
 - Phase 2 collector baseline is complete and tested.
-- Phase 3 basic dashboard/API endpoints are complete.
+- Phase 3 dashboard, Recovery Assistant, and API endpoints are complete.
 - Phase 4 scheduling and alert state transitions are complete at baseline level; notification transport is still pending.
 - Phase 5 docs content exists in-repo; static-site build/publish automation is still pending.
 - Phase 6 hardening and release polish is in progress.
@@ -15,7 +15,7 @@
 Deliverables:
 
 - Repository created
-- Product brief, architecture, and roadmap committed
+- Architecture and roadmap committed
 - Initial architecture decision record committed
 
 Exit criteria:
@@ -84,11 +84,13 @@ Deliverables:
 - Dashboard landing page
 - Health banner and status cards
 - Auto-refresh behavior
+- Recovery Assistant page
 - `/api/status` endpoint
 
 Acceptance criteria:
 
 - Dashboard renders correctly from a saved snapshot
+- Recovery page generates usable backup browse and restore commands
 - Status color rules match the documented thresholds
 - UI stays useful even when one collector has failed
 
@@ -102,15 +104,15 @@ Goals:
 Deliverables:
 
 - Alert evaluator
-- Email notifier
 - Alert state persistence
 - `systemd` units and timers for web app, collectors, and alert checks
+- Notification transport design and implementation follow-up
 
 Acceptance criteria:
 
-- Alert fires when a threshold is crossed
-- Duplicate alerts are suppressed until state changes
-- Resolved notifications are sent
+- Alert state transitions are computed when thresholds are crossed
+- Duplicate transitions are suppressed until state changes
+- Web, collector, and alert services run reliably under `systemd`
 
 ## Phase 5: Documentation website
 
@@ -177,9 +179,9 @@ Acceptance criteria:
 ## MVP definition of done
 
 - Dashboard shows current status for backup freshness, storage, SMART, services, and host telemetry
+- Recovery Assistant helps an operator mount, browse, and copy files from a backup
 - Collector and alert services run under `systemd`
-- Email alerts work and avoid repeated noise
-- Setup guide website is published from the repo
+- Docs are usable directly from the repository
 - Installation instructions are tested on the target Ubuntu server
 
 ## Post-MVP candidates
@@ -187,4 +189,3 @@ Acceptance criteria:
 - Add a local web UI setting for monitor check frequency that updates the collector schedule through validated bounds and clear operator feedback
 - Add push notification delivery such as `ntfy` after the email-based MVP alert flow is working
 - Add a local-only maintenance action that gracefully takes the Time Machine share offline and runs a user-requested disk check
-- Add a Recovery Assistant web UI that discovers backups, generates Mac recovery commands, and suggests troubleshooting commands for common Samba lock issues
