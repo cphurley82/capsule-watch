@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Capsule Watch Recovery Assistant</title>
+    <style>
+      :root {
+        --bg: #f3f7f5;
+        --card: #ffffff;
+        --text: #152029;
+        --muted: #5b6f79;
+        --border: #d6e2e8;
+        --accent: #005d7d;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        color: var(--text);
+        font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+        background:
+          radial-gradient(circle at 85% 5%, #e7f9ff 0, transparent 32%),
+          radial-gradient(circle at 10% 10%, #fff6e7 0, transparent 28%),
+          var(--bg);
+      }
+      main {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 1.2rem;
+      }
+      .topbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        margin-bottom: 1rem;
+      }
+      .topbar h1 {
+        margin: 0;
+        font-size: 1.8rem;
+      }
+      .subtle {
+        margin: 0.35rem 0 0;
+        color: var(--muted);
+      }
+      .user-form {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        align-items: center;
+        margin-top: 0.5rem;
+      }
+      .user-form input {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.35rem 0.45rem;
+        min-width: 180px;
+      }
+      .user-form button {
+        border: 1px solid #9eb5c5;
+        border-radius: 8px;
+        background: #f2f8ff;
+        color: #15415a;
+        padding: 0.35rem 0.6rem;
+        cursor: pointer;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        gap: 1rem;
+      }
+      .card {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--card);
+        padding: 0.9rem 1rem;
+      }
+      .card.wide {
+        grid-column: 1 / -1;
+      }
+      h2 {
+        margin: 0 0 0.65rem;
+        font-size: 1rem;
+      }
+      h3 {
+        margin: 0.9rem 0 0.4rem;
+        font-size: 0.95rem;
+      }
+      p {
+        margin: 0.35rem 0;
+      }
+      ul {
+        margin: 0.3rem 0 0.6rem;
+        padding-left: 1.1rem;
+      }
+      code {
+        background: #edf3ff;
+        border-radius: 5px;
+        padding: 0.12rem 0.28rem;
+      }
+      pre {
+        margin: 0.35rem 0 0.7rem;
+        border-radius: 8px;
+        border: 1px solid #e4ebf2;
+        background: #f8fbff;
+        padding: 0.65rem;
+        overflow-x: auto;
+        font-size: 0.82rem;
+      }
+      .empty {
+        border-left: 4px solid #cc8b00;
+        background: #fff8df;
+        color: #6a4b00;
+        padding: 0.65rem 0.7rem;
+        border-radius: 8px;
+      }
+      a {
+        color: var(--accent);
+      }
+      .badge {
+        display: inline-block;
+        border-radius: 999px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        font-size: 0.75rem;
+        padding: 0.15rem 0.5rem;
+        margin-left: 0.4rem;
+      }
+      .healthy { background: #def7e7; color: #136f3d; }
+      .warning { background: #fff4ce; color: #8a6100; }
+      .critical { background: #fde2e1; color: #8f1d1b; }
+      .unknown, .unsupported { background: #eef0f2; color: #374151; }
+    </style>
+  </head>
+  <body>
+    <main data-testid="recovery-page">
+      <header class="topbar">
+        <section>
+          <h1>Recovery Assistant</h1>
+          <p class="subtle">Generated from snapshot: <code>{{ generated_at }}</code></p>
+          <form class="user-form" method="get">
+            <label for="smb-user">SMB username:</label>
+            <input id="smb-user" name="smb_user" value="{{ smb_user_input }}" placeholder="chris">
+            <button type="submit">Update Commands</button>
+          </form>
+        </section>
+        <nav>
+          <a href="/">Back to Dashboard</a>
+        </nav>
+      </header>
+
+      <section class="grid">
+        <article class="card">
+          <h2>Recovery Targets</h2>
+          <p>Server host: <code>{{ server_host }}</code></p>
+          <p>SMB username: <code>{{ smb_user_display }}</code></p>
+          <p>SMB share: <code>{{ share_name }}</code></p>
+          <p>Time Machine root on server: <code>{{ time_machine_root }}</code></p>
+          <p class="subtle">Run these commands on the recovery Mac terminal (preferably a different Mac than the one being backed up).</p>
+        </article>
+
+        <article class="card">
+          <h2>Troubleshooting Commands (Server)</h2>
+          <p>Use these on your Ubuntu Time Machine server if attach fails with <code>Resource busy</code>.</p>
+          <pre>{{ troubleshooting.check_sessions }}</pre>
+          <pre>{{ troubleshooting.restart_samba }}</pre>
+        </article>
+
+        <article class="card wide">
+          <h2>Discovered Backups</h2>
+          {% if backups %}
+          <ul>
+            {% for backup in backups %}
+            <li>
+              <code>{{ backup.bundle_name }}</code>
+              <span class="badge {{ backup.status }}">{{ backup.status }}</span>
+              | source: <code>{{ backup.source_mac_name }}</code>
+              | age: <code>{{ backup.age_label }}</code>
+              | modified: <code>{{ backup.last_modified }}</code>
+            </li>
+            {% endfor %}
+          </ul>
+          {% else %}
+          <p class="empty">{{ empty_message }}</p>
+          {% endif %}
+        </article>
+
+        {% for backup in backups %}
+        <article class="card wide" data-testid="backup-{{ loop.index }}">
+          <h2>{{ backup.bundle_name }}</h2>
+          <p>Bundle path: <code>{{ backup.bundle_path }}</code></p>
+
+          <h3>1. Preflight Cleanup (on Mac)</h3>
+          <pre>{{ backup.commands.preflight }}</pre>
+
+          <h3>2. Mount SMB Share (on Mac)</h3>
+          <pre>{{ backup.commands.connect_share }}</pre>
+
+          <h3>3. Attach Sparsebundle Read-Only (on Mac)</h3>
+          <pre>{{ backup.commands.attach_bundle }}</pre>
+
+          <h3>4. Browse Mounted Backup (on Mac)</h3>
+          <pre>{{ backup.commands.browse_backup }}</pre>
+          <p class="subtle">If you see <code>Operation not permitted</code>, grant Full Disk Access to your terminal and retry.</p>
+
+          <h3>5. Copy Files Out with rsync (on Mac)</h3>
+          <pre>{{ backup.commands.copy_out }}</pre>
+
+        </article>
+        {% endfor %}
+      </section>
+    </main>
+  </body>
+</html>

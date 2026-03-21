@@ -15,7 +15,7 @@ The repository includes a tested initial implementation with:
 - Snapshot persistence and loading from local disk
 - Collectors for backup recency, storage, SMART health, services, filesystem metadata, and host telemetry
 - Alert transition evaluation with persisted active state
-- Flask web endpoints for `/`, `/healthz`, and `/api/status`
+- Flask web endpoints for `/`, `/recovery`, `/healthz`, and `/api/status`
 - Versioned `systemd` units and timers for web, collector, and alert jobs
 
 Email delivery and push channels are still planned enhancements. The current alert service computes transitions and stores state.
