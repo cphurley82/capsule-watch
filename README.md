@@ -24,6 +24,7 @@ Email delivery and push channels are still planned enhancements. The current ale
 
 - [DIY Time Capsule setup](docs/diy-time-capsule-setup.md) (Ubuntu + Samba)
 - [Disk formatting for Time Machine](docs/disk-formatting-for-time-machine.md)
+- [Verify and restore Time Machine backups (CLI)](docs/verify-and-restore-time-machine-backups.md)
 - [Install Capsule Watch](docs/install-capsule-watch.md) (service user, config, sudoers, `systemd`)
 
 ## Python workflow

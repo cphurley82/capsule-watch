@@ -43,7 +43,24 @@ Edit `/etc/samba/smb.conf`:
 sudoedit /etc/samba/smb.conf
 ```
 
-Add a share block:
+Add or verify the following in `[global]`:
+
+```ini
+[global]
+server min protocol = SMB2
+vfs objects = catia fruit streams_xattr
+fruit:aapl = yes
+fruit:metadata = stream
+fruit:encoding = native
+fruit:model = TimeCapsule6,106
+fruit:posix_rename = yes
+fruit:veto_appledouble = no
+fruit:nfs_aces = no
+fruit:wipe_intentionally_left_blank_rfork = yes
+fruit:delete_empty_adfiles = yes
+```
+
+Add a share block (or update your existing Time Machine share):
 
 ```ini
 [TimeCapsule]
@@ -54,15 +71,19 @@ guest ok = no
 valid users = timemachine
 create mask = 0660
 directory mask = 2770
-vfs objects = catia fruit streams_xattr
+ea support = yes
 fruit:time machine = yes
 fruit:advertise_fullsync = true
+# Optional cap:
+# fruit:time machine max size = 7000G
 ```
+
+If you already have `vfs objects` set globally for other shares, merge `catia fruit streams_xattr` into that existing line rather than creating duplicate `vfs objects` entries.
 
 Validate config before restart:
 
 ```bash
-testparm -s
+sudo testparm -s
 ```
 
 ## 5. Enable and restart services
@@ -86,6 +107,13 @@ systemctl status avahi-daemon --no-pager --lines=0
 3. In Time Machine settings, select this share as a destination.
 4. Start an initial backup.
 
+Optional CLI confirmation from the Mac:
+
+```bash
+tmutil destinationinfo
+tmutil status
+```
+
 ## 7. Verify backup artifacts on Ubuntu
 
 ```bash
@@ -94,9 +122,20 @@ find /srv/timecapsule -maxdepth 1 -type d -name '*.sparsebundle'
 
 You should see one sparsebundle directory per Mac that has backed up.
 
+Check that band files are changing during/after a backup:
+
+```bash
+find /srv/timecapsule -maxdepth 3 -type f -path '*/bands/*' -printf '%TY-%Tm-%Td %TH:%TM:%TS %p\n' | sort | tail -n 20
+```
+
+`*.sparsebundle` appearing as a directory is expected. Time Machine sparsebundles are package directories.
+
 ## 8. Next step
 
-Once backups are working, continue with [Install Capsule Watch](install-capsule-watch.md).
+Once backups are working:
+
+1. Continue with [Install Capsule Watch](install-capsule-watch.md).
+2. Add ongoing validation and recovery checks from [Verify and restore Time Machine backups (CLI)](verify-and-restore-time-machine-backups.md).
 
 ## What `avahi-daemon` does
 

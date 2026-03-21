@@ -2,6 +2,8 @@
 
 This guide assumes you have already completed the DIY Time Capsule setup and verified that Time Machine backups are working over Samba.
 
+For CLI-first backup validation and restore testing (including recovery to a different Mac), see [Verify and restore Time Machine backups (CLI)](verify-and-restore-time-machine-backups.md).
+
 This install path has been validated against a local Ubuntu 24.04 host and reflects the current repository layout (`config/`, `deploy/systemd/`, and Python CLI entry points).
 
 ## What this guide covers

@@ -187,3 +187,4 @@ Acceptance criteria:
 - Add a local web UI setting for monitor check frequency that updates the collector schedule through validated bounds and clear operator feedback
 - Add push notification delivery such as `ntfy` after the email-based MVP alert flow is working
 - Add a local-only maintenance action that gracefully takes the Time Machine share offline and runs a user-requested disk check
+- Add a Recovery Assistant web UI that discovers backups, generates Mac recovery commands, and suggests troubleshooting commands for common Samba lock issues
