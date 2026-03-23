@@ -9,7 +9,10 @@ If you are new to the project, start here instead of reading individual planning
 - [Local development guide](local-development.md): practical day-to-day commands, test flows, and the fast systemd-backed iteration workflow
 - [Development standards](development-standards.md): commit expectations, testing rules, and tooling conventions
 - [Architecture](architecture.md): runtime model, core components, security boundaries, and deployment assumptions
-- [macOS rsync automation handoff](macos-rsync-automation-handoff.md): validated backup-doc context, pending gaps, and the exact next step for resuming Mac-side automation testing
+
+For Mac-side rsync backup setup and automation, use the operator guide in the top-level docs directory:
+
+- [Set Up rsync Backups from macOS](../rsync-backups-from-macos.md): Mac-side rsync setup, manual backup workflow, and laptop-friendly `launchd` automation
 
 ## Product and roadmap context
 

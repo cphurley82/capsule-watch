@@ -2,8 +2,6 @@
 
 This guide configures a Mac to send an rsync backup stream to the Ubuntu server over SSH.
 
-TODO: Manual rsync runs have been validated on a live Mac and Ubuntu server, but the `launchd` automation path still needs end-to-end validation on a real Mac after the latest script and LaunchAgent updates.
-
 It assumes the Ubuntu server already has:
 
 - the ZFS layout from [Prepare a ZFS Backup Disk for Time Machine and rsync](disk-formatting-for-time-machine.md)
@@ -172,6 +170,8 @@ Be careful with broad excludes under `Library`. Some application data in `Librar
 
 The script below rewrites these absolute exclude patterns per source before each rsync run, so you can keep the exclude file easy to read.
 
+If an exclude ends in `/**`, the script should also exclude the parent directory itself. Without that extra parent-dir exclude, rsync can still descend into protected macOS paths and emit `Operation not permitted` during automated runs.
+
 The backup keeps the same path shape under the server-side `current/` tree. For example, `/Users/chris/Documents` becomes `/backupz/rsync/<mac-name>/current/Users/chris/Documents`.
 
 Using `/Users` is the simplest broad option, but many people later narrow it to a smaller allowlist once they better understand what they do and do not want to retain.
@@ -185,10 +185,14 @@ cat > "$HOME/bin/backup-to-capsule-rsync.zsh" <<'EOF'
 #!/bin/zsh
 set -euo pipefail
 
+umask 077
+PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
+
 SERVER_HOST="<server-ip-or-hostname>"
 REMOTE_USER="rsync-backup"
 MAC_NAME="macbook-air"
 KEY_FILE="$HOME/.ssh/id_ed25519_capsule_backup"
+
 if [[ -x /opt/homebrew/bin/brew ]]; then
   BREW_BIN="/opt/homebrew/bin/brew"
 elif [[ -x /usr/local/bin/brew ]]; then
@@ -199,9 +203,144 @@ else
 fi
 
 RSYNC_BIN="$("$BREW_BIN" --prefix rsync)/bin/rsync"
-SOURCES_FILE="$HOME/.config/capsule-backup/rsync-sources.txt"
-EXCLUDES_FILE="$HOME/.config/capsule-backup/rsync-excludes.txt"
+SSH_BIN="/usr/bin/ssh"
+CONFIG_DIR="$HOME/.config/capsule-backup"
+STATE_DIR="$HOME/.local/state/capsule-backup"
+SOURCES_FILE="$CONFIG_DIR/rsync-sources.txt"
+EXCLUDES_FILE="$CONFIG_DIR/rsync-excludes.txt"
 REMOTE_ROOT="/backupz/rsync/$MAC_NAME/current"
+STATUS_FILE="$STATE_DIR/status.txt"
+LAST_SUCCESS_FILE="$STATE_DIR/last-success.txt"
+LAST_FAILURE_FILE="$STATE_DIR/last-failure.txt"
+LOCK_DIR="$STATE_DIR/run.lock"
+START_TIME="$(date '+%Y-%m-%d %H:%M:%S %Z')"
+LOCK_OWNED=0
+FORCE_RUN=0
+STATUS_FINALIZED=0
+
+while (( $# > 0 )); do
+  case "$1" in
+    --force)
+      FORCE_RUN=1
+      shift
+      ;;
+    *)
+      echo "Usage: $0 [--force]" >&2
+      exit 2
+      ;;
+  esac
+done
+
+mkdir -p "$STATE_DIR"
+
+write_status() {
+  local run_state="$1"
+  local exit_code="$2"
+  local end_time="$3"
+  local note="${4:-}"
+
+  cat > "$STATUS_FILE" <<EOF_STATUS
+status=$run_state
+exit_code=$exit_code
+start_time=$START_TIME
+end_time=$end_time
+server_host=$SERVER_HOST
+mac_name=$MAC_NAME
+note=$note
+EOF_STATUS
+}
+
+finalize_status() {
+  local run_state="$1"
+  local exit_code="$2"
+  local stamp
+
+  stamp="$(date '+%Y-%m-%d %H:%M:%S %Z')"
+  write_status "$run_state" "$exit_code" "$stamp"
+
+  if [[ "$run_state" == "success" ]]; then
+    printf '%s\n' "$stamp" > "$LAST_SUCCESS_FILE"
+  else
+    printf '%s\n' "$stamp" > "$LAST_FAILURE_FILE"
+  fi
+}
+
+record_skip() {
+  local note="$1"
+  local stamp
+
+  stamp="$(date '+%Y-%m-%d %H:%M:%S %Z')"
+  write_status "skipped" "0" "$stamp" "$note"
+  STATUS_FINALIZED=1
+}
+
+cleanup() {
+  local exit_code=$?
+
+  if [[ "$LOCK_OWNED" -eq 1 ]]; then
+    rm -rf "$LOCK_DIR"
+  fi
+
+  if [[ "${STATUS_FINALIZED:-0}" -eq 0 ]]; then
+    finalize_status "failed" "$exit_code" >/dev/null 2>&1 || true
+  fi
+}
+
+trap cleanup EXIT INT TERM
+
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  if [[ -f "$LOCK_DIR/pid" ]]; then
+    existing_pid="$(<"$LOCK_DIR/pid")"
+    if kill -0 "$existing_pid" 2>/dev/null; then
+      echo "Another backup run is already in progress with pid $existing_pid"
+      record_skip "already_running"
+      exit 0
+    fi
+  fi
+
+  rm -rf "$LOCK_DIR"
+  mkdir "$LOCK_DIR"
+fi
+
+printf '%s\n' "$$" > "$LOCK_DIR/pid"
+LOCK_OWNED=1
+write_status "running" "0" "-"
+
+for required_path in "$KEY_FILE" "$SOURCES_FILE" "$EXCLUDES_FILE"; do
+  [[ -r "$required_path" ]] || { echo "Missing required file: $required_path" >&2; exit 1; }
+done
+
+[[ -x "$RSYNC_BIN" ]] || { echo "rsync binary not found: $RSYNC_BIN" >&2; exit 1; }
+
+SSH_OPTS=(
+  -i "$KEY_FILE"
+  -o BatchMode=yes
+  -o ConnectTimeout=10
+  -o ServerAliveInterval=30
+  -o ServerAliveCountMax=3
+)
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S %Z')] Starting capsule rsync backup"
+echo "Server: $SERVER_HOST"
+echo "Mac dataset: $MAC_NAME"
+
+today_stamp="$(date '+%Y-%m-%d')"
+if [[ "$FORCE_RUN" -eq 0 && -r "$LAST_SUCCESS_FILE" ]]; then
+  last_success="$(<"$LAST_SUCCESS_FILE")"
+  if [[ "$last_success" == "$today_stamp"* ]]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S %Z')] Backup already completed today; skipping"
+    record_skip "already_completed_today"
+    exit 0
+  fi
+fi
+
+"$SSH_BIN" "${SSH_OPTS[@]}" "$REMOTE_USER@$SERVER_HOST" "true"
+
+if [[ -t 1 ]]; then
+  RSYNC_INFO="progress2,stats2"
+else
+  RSYNC_INFO="stats2"
+fi
 
 backup_status=0
 
@@ -216,38 +355,47 @@ while IFS= read -r src; do
   fi
 
   remote_rel="${src#/}"
-  exclude_tmp="$(mktemp)"
+  exclude_tmp="$(mktemp "${TMPDIR:-/tmp}/capsule-rsync-exclude.XXXXXX")"
 
   while IFS= read -r raw_exclude; do
     [[ -z "$raw_exclude" || "$raw_exclude" == \#* ]] && continue
     [[ "$raw_exclude" == "$src" || "$raw_exclude" == "$src/"* ]] || continue
-    printf '%s\n' "${raw_exclude#$src}" >> "$exclude_tmp"
+    mapped_exclude="${raw_exclude#$src}"
+    printf '%s\n' "$mapped_exclude" >> "$exclude_tmp"
+
+    # Also exclude the parent directory so rsync does not descend into
+    # protected macOS paths before the recursive pattern takes effect.
+    if [[ "$mapped_exclude" == */\*\* ]]; then
+      printf '%s\n' "${mapped_exclude%/\*\*}" >> "$exclude_tmp"
+    fi
   done < "$EXCLUDES_FILE"
 
-  echo "Starting rsync for: $src"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S %Z')] Starting rsync for: $src"
 
   if [[ -d "$src" ]]; then
     "$RSYNC_BIN" \
       --archive \
       --human-readable \
-      --info=progress2 \
+      --info="$RSYNC_INFO" \
+      --partial \
       --protect-args \
       --delete \
       --delete-excluded \
       --mkpath \
       --exclude-from="$exclude_tmp" \
-      -e "ssh -i $KEY_FILE" \
+      -e "$SSH_BIN ${SSH_OPTS[*]}" \
       "$src/" \
       "$REMOTE_USER@$SERVER_HOST:$REMOTE_ROOT/$remote_rel/" || backup_status=1
   else
     "$RSYNC_BIN" \
       --archive \
       --human-readable \
-      --info=progress2 \
+      --info="$RSYNC_INFO" \
+      --partial \
       --protect-args \
       --mkpath \
       --exclude-from="$exclude_tmp" \
-      -e "ssh -i $KEY_FILE" \
+      -e "$SSH_BIN ${SSH_OPTS[*]}" \
       "$src" \
       "$REMOTE_USER@$SERVER_HOST:$REMOTE_ROOT/$remote_rel" || backup_status=1
   fi
@@ -255,10 +403,20 @@ while IFS= read -r src; do
   rm -f "$exclude_tmp"
 done < "$SOURCES_FILE"
 
-(( backup_status == 0 )) || exit "$backup_status"
+if (( backup_status != 0 )); then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S %Z')] Backup finished with rsync errors"
+  finalize_status "failed" "$backup_status"
+  STATUS_FINALIZED=1
+  exit "$backup_status"
+fi
 
-ssh -i "$KEY_FILE" "$REMOTE_USER@$SERVER_HOST" \
+echo "[$(date '+%Y-%m-%d %H:%M:%S %Z')] Creating snapshot for: $MAC_NAME"
+"$SSH_BIN" "${SSH_OPTS[@]}" "$REMOTE_USER@$SERVER_HOST" \
   "sudo /usr/local/sbin/capsule-rsync-post-backup '$MAC_NAME'"
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S %Z')] Backup completed successfully"
+finalize_status "success" "0"
+STATUS_FINALIZED=1
 EOF
 chmod 700 "$HOME/bin/backup-to-capsule-rsync.zsh"
 ```
@@ -269,13 +427,16 @@ Set `SERVER_HOST` and `MAC_NAME` to match the server and per-Mac ZFS dataset you
 
 Use a normalized lowercase name such as `macbook-air` or `office-mac-mini`. Avoid spaces and punctuation.
 
-This script does three things:
+This script does the following:
 
 1. syncs each approved path into `current/...` using the same path shape it has on the Mac
 2. fails if any listed source is missing or any rsync run fails
 3. skips paths matched by the exclude file
 4. removes excluded files from `current/...` on later runs if they were copied earlier
 5. takes a ZFS snapshot only after the whole run succeeds
+6. writes a simple local status record so you can check the last successful or failed run later
+7. avoids overlapping runs by using a lock directory under `~/.local/state/capsule-backup`
+8. under the laptop-friendly schedule, skips quickly if a successful backup already happened today unless you pass `--force`
 
 ## 5. Run the first backup manually
 
@@ -296,6 +457,7 @@ If the run ends with `rsync error ... (code 23)` and many `Operation not permitt
 
 - confirm Full Disk Access is enabled for the launcher app you are actually using
 - restart that launcher app after changing macOS privacy settings
+- confirm the live script includes the current exclude rewrite logic from step 4
 - extend the exclude file for the Apple-managed `Library` paths that are still denied
 
 Then run:
@@ -303,6 +465,14 @@ Then run:
 ```bash
 "$HOME/bin/backup-to-capsule-rsync.zsh"
 ```
+
+If you need to bypass the once-per-day guard and run the backup again manually on the same day, use:
+
+```bash
+"$HOME/bin/backup-to-capsule-rsync.zsh" --force
+```
+
+Use `--force` from the same terminal app that already has the needed macOS privacy permissions. A same-day forced rerun launched from a different shell context can still hit `Operation not permitted` even when the normal operator workflow is healthy.
 
 After it finishes, verify from the server:
 
@@ -320,6 +490,10 @@ If you did not configure `backupreaders` on Ubuntu, rerun the inspection command
 
 ## 6. Automate it with `launchd`
 
+`launchd` tends to surface automation bugs faster than an interactive shell because it starts with a smaller environment and does not benefit from your terminal app's context.
+
+The example below is laptop-friendly: `launchd` checks once per hour, and the script exits quickly if a successful backup already happened today.
+
 Create a per-user LaunchAgent:
 
 ```bash
@@ -336,15 +510,14 @@ cat > "$HOME/Library/LaunchAgents/local.capsule-backup.rsync.plist" <<'EOF'
     <string>/bin/zsh</string>
     <string>/Users/REPLACE_ME/bin/backup-to-capsule-rsync.zsh</string>
   </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/REPLACE_ME</string>
+  <key>ProcessType</key>
+  <string>Background</string>
   <key>RunAtLoad</key>
   <true/>
-  <key>StartCalendarInterval</key>
-  <dict>
-    <key>Hour</key>
-    <integer>1</integer>
-    <key>Minute</key>
-    <integer>0</integer>
-  </dict>
+  <key>StartInterval</key>
+  <integer>3600</integer>
   <key>StandardOutPath</key>
   <string>/Users/REPLACE_ME/Library/Logs/capsule-backup-rsync.log</string>
   <key>StandardErrorPath</key>
@@ -358,8 +531,8 @@ Replace `REPLACE_ME` with your macOS username before loading it:
 
 ```bash
 plutil -lint "$HOME/Library/LaunchAgents/local.capsule-backup.rsync.plist"
-launchctl unload "$HOME/Library/LaunchAgents/local.capsule-backup.rsync.plist" 2>/dev/null || true
-launchctl load "$HOME/Library/LaunchAgents/local.capsule-backup.rsync.plist"
+launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/local.capsule-backup.rsync.plist" 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/local.capsule-backup.rsync.plist"
 launchctl kickstart -k "gui/$(id -u)/local.capsule-backup.rsync"
 ```
 
@@ -368,9 +541,52 @@ Check status:
 ```bash
 launchctl print "gui/$(id -u)/local.capsule-backup.rsync"
 tail -n 50 "$HOME/Library/Logs/capsule-backup-rsync.log"
+sed -n '1,80p' "$HOME/.local/state/capsule-backup/status.txt"
 ```
 
-## 7. Restore data later
+Expected result:
+
+- `launchctl print` eventually shows `last exit code = 0`
+- the log either shows a real backup run ending with `Backup completed successfully` or a fast skip with `Backup already completed today; skipping`
+- the status file shows either `status=success` or `status=skipped`
+- Ubuntu shows a fresh `auto-...` snapshot for the per-Mac dataset when the run actually performs a backup instead of skipping
+
+For hourly checks, the common healthy pattern is:
+
+- the first successful run of the day creates the fresh Ubuntu snapshot
+- later hourly runs that same day exit quickly with `status=skipped` and `note=already_completed_today`
+
+If you want to run the real backup path again on the same day instead of the skip path, run the script manually with `--force` from your normal terminal app first, then re-check Ubuntu for the fresh snapshot.
+
+If the forced run still shows many `Operation not permitted` lines for paths that are already in the exclude file, pause and inspect the generated exclude handling before assuming the problem is only Full Disk Access.
+
+## 7. Mac-side files
+
+These are the main files and paths involved on the Mac side after setup:
+
+| Path | Purpose |
+| --- | --- |
+| `$HOME/.ssh/id_ed25519_capsule_backup` | Private SSH key used by the backup script to connect to `rsync-backup` on Ubuntu. |
+| `$HOME/.ssh/id_ed25519_capsule_backup.pub` | Public key you install into `/home/rsync-backup/.ssh/authorized_keys` on Ubuntu. |
+| `$HOME/.config/capsule-backup/rsync-sources.txt` | Allowlist of source paths to back up. |
+| `$HOME/.config/capsule-backup/rsync-excludes.txt` | Exclude patterns filtered per source before each rsync run. |
+| `$HOME/bin/backup-to-capsule-rsync.zsh` | Main Mac-side backup script for manual and automated runs. |
+| `$HOME/Library/LaunchAgents/local.capsule-backup.rsync.plist` | Per-user LaunchAgent that schedules the background backup job. |
+| `$HOME/Library/Logs/capsule-backup-rsync.log` | Combined stdout/stderr log from `launchd` runs. |
+| `$HOME/.local/state/capsule-backup/status.txt` | Latest run status summary written by the script. |
+| `$HOME/.local/state/capsule-backup/last-success.txt` | Timestamp of the most recent successful run. |
+| `$HOME/.local/state/capsule-backup/last-failure.txt` | Timestamp of the most recent failed run. |
+| `$HOME/.local/state/capsule-backup/run.lock` | Transient lock directory used to prevent overlapping runs. |
+
+Typical inspection commands:
+
+```bash
+sed -n '1,80p' "$HOME/.local/state/capsule-backup/status.txt"
+tail -n 50 "$HOME/Library/Logs/capsule-backup-rsync.log"
+launchctl print "gui/$(id -u)/local.capsule-backup.rsync"
+```
+
+## 8. Restore data later
 
 Use [Verify and Restore rsync + ZFS Backups](verify-and-restore-rsync-backups.md) for:
 
@@ -378,7 +594,7 @@ Use [Verify and Restore rsync + ZFS Backups](verify-and-restore-rsync-backups.md
 - historical restore from `/.zfs/snapshot/...`
 - replacement-Mac copy-back
 
-## 8. Notes and limitations
+## 9. Notes and limitations
 
 - This workflow is intentionally conservative. It backs up selected user data, not the whole system.
 - If a backup relies on macOS-specific metadata, package directories, or protected locations, test that data set explicitly before you trust it.
