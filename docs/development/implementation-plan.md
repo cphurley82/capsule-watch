@@ -189,3 +189,4 @@ Acceptance criteria:
 - Add a local web UI setting for monitor check frequency that updates the collector schedule through validated bounds and clear operator feedback
 - Add push notification delivery such as `ntfy` after the email-based MVP alert flow is working
 - Add a local-only maintenance action that gracefully takes the Time Machine share offline and runs a user-requested disk check
+- Broaden Capsule Watch beyond its current Time Machine-centric assumptions so it works well for `rsync + ZFS`-only deployments and for parallel Time Machine + rsync setups, including collector coverage, dashboard language, and recovery guidance

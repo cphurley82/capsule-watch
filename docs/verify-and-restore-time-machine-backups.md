@@ -1,25 +1,25 @@
 # Verify and Restore Time Machine Backups
 
-This guide is for two jobs:
+This guide covers two jobs:
 
-- testing that network Time Machine backups are really readable
-- recovering files from a backup after a Mac has failed
+- proving that your Time Machine backup path is really usable
+- restoring files after a Mac has failed
 
-If you are actively recovering from a failed source Mac, start at section **2**.
+It assumes you are using Time Machine over SMB.
 
 ## Command context
 
 Unless explicitly marked as Ubuntu server commands, run commands in this guide on a Mac terminal.
 
 - `Mac` means run on the Mac you are using for verification or recovery.
-- `Ubuntu server` means run on the Time Machine server host over SSH or local terminal.
-- If you are using `zsh`, avoid pasting comment lines into the shell unless you first run `setopt interactivecomments`.
+- `Ubuntu server` means run on the backup server host over SSH or local terminal.
+- If you use `zsh`, avoid pasting comment lines into the shell unless you first run `setopt interactivecomments`.
 
-## 1. Optional: verify that new backups are writing
+## 1. Verify that Time Machine is still writing
 
-Run this on the source Mac when it is still healthy.
+Run this on the source Mac while it is still healthy.
 
-Confirm Time Machine is using the network destination:
+Confirm that Time Machine is using the network destination:
 
 `Mac`:
 
@@ -29,33 +29,41 @@ tmutil status
 mount | grep smbfs
 ```
 
-Look for a `Kind : Network` destination and confirm backup activity finishes with `Running = 0`.
+Look for:
+
+- `Kind : Network`
+- the expected SMB share
+- the expected network URL, such as `smb://<user>@<host>._smb._tcp.local./TimeCapsule`
+- `Running = 0` after the backup completes
+
+If you used your normal Samba username instead of a dedicated `timemachine` account during setup, that is fine. The checks in this guide work with either account.
+
+It is normal for `tmutil destinationinfo` to show more than one destination. If the Mac also has local Time Machine history or other backup targets configured, focus on whether the expected `Network` destination is present.
+
+It is also normal for `mount | grep smbfs` to return nothing when the network backup is idle. The SMB mount may appear only while a backup is actively running or while the share is in use.
 
 If you want server-side proof that the network backup is being written, check sparsebundle band timestamps before and after a backup:
 
 `Ubuntu server`:
 
 ```bash
-find /srv/timecapsule -maxdepth 3 -type f -path '*/bands/*' -printf '%T@ %p\n' | sort -n | tail -n 5
+find /backupz/timemachine -maxdepth 3 -type f -path '*/bands/*' -printf '%T@ %p\n' | sort -n | tail -n 5
 ```
 
-Replace `/srv/timecapsule` with your real backup root if different.
+Replace `/backupz/timemachine` if your mountpoint is different.
 
-## 2. Recovery flow: mount, browse, and copy files from a different Mac
-
-Run this on a different Mac than the one that created the backup.
+## 2. Restore from Time Machine on a different Mac
 
 This flow proves all of the following:
 
 - the Time Machine share is reachable
-- the source Mac sparsebundle exists
+- the sparsebundle exists
 - the backup can be mounted read-only
-- files can be browsed and read
-- files can be copied out
+- files can be browsed and copied out
 
 ### 2.1 Find the share name
 
-If the source Mac is still available, you can get the network destination from:
+If the source Mac is still available:
 
 `Mac (source Mac)`:
 
@@ -63,25 +71,25 @@ If the source Mac is still available, you can get the network destination from:
 tmutil destinationinfo
 ```
 
-Look for the `Kind : Network` entry and take the last path component of its URL as the share name.
+Take the last path component from the network destination URL.
 
-If the source Mac has crashed or is unavailable, discover the share from the recovery Mac:
+If the source Mac is unavailable, discover the share from the recovery Mac:
 
 `Mac (different Mac)`:
 
 ```bash
 SERVER_HOST="192.168.1.10"
-SMB_USER="backupuser"
+SMB_USER="<samba-user>"
 smbutil view "//$SMB_USER@$SERVER_HOST"
 ```
 
-Choose the Time Machine share from the list and set:
+Set:
 
 ```bash
-SHARE_NAME="timemachine"
+SHARE_NAME="TimeCapsule"
 ```
 
-If needed, you can also discover shares from the server:
+If needed, you can also list shares from the server:
 
 `Ubuntu server`:
 
@@ -89,21 +97,19 @@ If needed, you can also discover shares from the server:
 testparm -s 2>/dev/null | sed -n 's/^\[\(.*\)\]$/\1/p' | grep -Ev '^(global|printers|print\$)$'
 ```
 
-### 2.2 Define the recovery variables and clean up old mounts
-
-This validated flow uses a normal `/Volumes/<share-name>` mount on the recovery Mac.
+### 2.2 Define variables and clean up old mounts
 
 `Mac (different Mac)`:
 
 ```bash
 cd ~
 SERVER_HOST="192.168.1.10"
-SMB_USER="backupuser"
-SHARE_NAME="timemachine"
+SMB_USER="<samba-user>"
+SHARE_NAME="TimeCapsule"
 BUNDLE_NAME="My-Source-Mac.sparsebundle"
 ```
 
-Before remounting, detach any older backup image mounts and unmount any stale SMB mount for the same share:
+Detach any older image mounts and unmount stale SMB mounts:
 
 `Mac (different Mac)`:
 
@@ -124,9 +130,11 @@ mount_smbfs "//$SMB_USER@$SERVER_HOST/$SHARE_NAME" "$SHARE_MOUNT"
 find "$SHARE_MOUNT" -maxdepth 1 -type d -name '*.sparsebundle' -print
 ```
 
-That final `find` command should list the sparsebundle you intend to inspect.
+If more than one sparsebundle is listed, choose the right one and update `BUNDLE_NAME`.
 
-If more than one sparsebundle is listed, choose the right one and set `BUNDLE_NAME` manually before continuing.
+Use the Samba username that the Time Machine share actually allows. For example, if your Samba share uses `valid users = chris`, set `SMB_USER="chris"` throughout this section.
+
+`BUNDLE_NAME` must match the actual sparsebundle directory on the server, such as `My-MacBook-Air.sparsebundle`. If you are unsure, use the `find "$SHARE_MOUNT" ...` output from section **2.3** instead of guessing.
 
 ### 2.4 Attach the backup read-only
 
@@ -138,17 +146,9 @@ test -d "$SOURCE_BUNDLE"
 hdiutil attach -readonly "$SOURCE_BUNDLE"
 ```
 
-Success looks like this pattern:
+Success should show a mounted `Backups of ...` volume.
 
-```text
-/dev/disk4
-/dev/disk5              EF57347C-0000-11AA-AA11-0030654
-/dev/disk5s1            41504653-0000-11AA-AA11-0030654 /Volumes/Backups of My-Source-Mac
-```
-
-If `hdiutil attach` fails with `Resource busy`, the sparsebundle is usually locked by another Mac or stale Samba session state.
-
-Try this on the server:
+If `hdiutil attach` fails with `Resource busy`, check for stale Samba sessions:
 
 `Ubuntu server`:
 
@@ -157,7 +157,7 @@ sudo smbstatus
 sudo systemctl restart smbd
 ```
 
-Then on the recovery Mac, remount the SMB share from section **2.3** and retry `hdiutil attach -readonly "$SOURCE_BUNDLE"`.
+Then remount the share and retry.
 
 ### 2.5 Browse the mounted backup
 
@@ -170,35 +170,11 @@ ls -la "$BACKUP_VOLUME" || sudo ls -la "$BACKUP_VOLUME"
 find "$BACKUP_VOLUME" -maxdepth 2 -type d | head -n 40 || sudo find "$BACKUP_VOLUME" -maxdepth 2 -type d | head -n 40
 ```
 
-If you can list the backup root and see snapshot directories such as `2026-03-20-161440.previous`, the backup is mounted and readable.
+If you can see snapshot directories such as `2026-03-20-161440.previous`, the backup is mounted and readable.
 
-If you see `Operation not permitted`, give Terminal or iTerm Full Disk Access in macOS Privacy settings and retry.
+Because the mounted backup path contains spaces, always quote it. For example, use `ls -la "$BACKUP_VOLUME"` rather than `ls -la /Volumes/Backups of ...`.
 
-### 2.6 Drill down to the file you want
-
-From the snapshot list, choose the snapshot and source volume you want:
-
-`Mac (different Mac)`:
-
-```bash
-cd "$BACKUP_VOLUME"
-ls
-```
-
-Example:
-
-```bash
-SNAPSHOT_NAME="2026-03-20-161440.previous"
-SOURCE_VOLUME="Macintosh HD - Data"
-cd "$BACKUP_VOLUME/$SNAPSHOT_NAME/$SOURCE_VOLUME"
-ls
-```
-
-At this point you can browse normally with `cd`, `ls`, `find`, `cat`, or `open`.
-
-### 2.7 Copy files out
-
-Use `rsync` as the default recovery tool. It is a good fit for both single files and large directory trees.
+### 2.6 Copy files out
 
 `Mac (different Mac)`:
 
@@ -208,24 +184,13 @@ SNAPSHOT_NAME="<snapshot-name>.previous"
 SOURCE_VOLUME="<source-volume>"
 SOURCE_REL_PATH="<path-inside-source-volume>"
 SOURCE_PATH="$BACKUP_VOLUME/$SNAPSHOT_NAME/$SOURCE_VOLUME/$SOURCE_REL_PATH"
-echo "$SOURCE_PATH"
 mkdir -p "$HOME/Recovered-from-TimeMachine"
 rsync -avh "$SOURCE_PATH" "$HOME/Recovered-from-TimeMachine/"
 ```
 
-For example, if you want to recover a directory from `Users/alex/Pictures/photo-library`:
+If the copy succeeds, the Time Machine backup is usable for recovery.
 
-```bash
-BACKUP_VOLUME="/Volumes/Backups of ${BUNDLE_NAME%.sparsebundle}"
-SNAPSHOT_NAME="2026-03-20-161440.previous"
-SOURCE_VOLUME="Macintosh HD - Data"
-SOURCE_REL_PATH="Users/alex/Pictures/photo-library"
-SOURCE_PATH="$BACKUP_VOLUME/$SNAPSHOT_NAME/$SOURCE_VOLUME/$SOURCE_REL_PATH"
-mkdir -p "$HOME/Recovered-from-TimeMachine"
-rsync -avh "$SOURCE_PATH" "$HOME/Recovered-from-TimeMachine/"
-```
-
-If `rsync` copies the file or directory into `~/Recovered-from-TimeMachine`, recovery from the network backup is working.
+`SOURCE_VOLUME` can vary by Mac and macOS install. Common examples include `Macintosh HD - Data`, but it may also be a host-specific name such as `macos15-2026-01 - Data`. Use `ls "$BACKUP_VOLUME/$SNAPSHOT_NAME"` to discover the correct value before copying.
 
 ## 3. Cleanly detach after verification
 
@@ -255,18 +220,4 @@ touch "$SOURCE_BUNDLE/token"
 chmod 600 "$SOURCE_BUNDLE/token"
 ```
 
-Then retry attach.
-
-### `hdiutil attach` fails with `Resource busy`
-
-Follow the recovery path in section **2.4**. In practice, restarting Samba on the server often clears stale sessions and resolves this.
-
-### Mounted backup root shows `Operation not permitted`
-
-This can happen with modern APFS Time Machine backup structure and macOS permissions.
-
-If needed, grant Terminal or iTerm Full Disk Access in macOS Privacy settings and retry.
-
-### Mounted share is empty or missing in `/Volumes`
-
-If you mounted with `mount_smbfs`, make sure you are looking at the actual mount path you used, such as `"/Volumes/$SHARE_NAME"`.
+Then retry `hdiutil attach -readonly "$SOURCE_BUNDLE"`.

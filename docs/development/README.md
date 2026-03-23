@@ -9,11 +9,17 @@ If you are new to the project, start here instead of reading individual planning
 - [Local development guide](local-development.md): practical day-to-day commands, test flows, and the fast systemd-backed iteration workflow
 - [Development standards](development-standards.md): commit expectations, testing rules, and tooling conventions
 - [Architecture](architecture.md): runtime model, core components, security boundaries, and deployment assumptions
+- [macOS rsync automation handoff](macos-rsync-automation-handoff.md): validated backup-doc context, pending gaps, and the exact next step for resuming Mac-side automation testing
 
 ## Product and roadmap context
 
 - [Implementation plan](implementation-plan.md): shipped phases, remaining work, and roadmap direction
 - [Recovery Assistant design](recovery-assistant-design.md): design background for the recovery workflow in the web UI
+- [Parallel Time Machine + rsync + ZFS design](parallel-time-machine-rsync-zfs-design.md): design for running Apple-native backups and directly accessible ZFS-backed backups side by side
+
+Current product TODO:
+
+- Make Capsule Watch work well for `rsync + ZFS`-only deployments and for parallel Time Machine + rsync deployments, not just Time Machine-centric setups.
 
 ## Historical planning docs
 
